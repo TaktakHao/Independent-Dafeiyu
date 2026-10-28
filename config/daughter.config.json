@@ -1,0 +1,121 @@
+{
+  "mode": "companion",
+  "app": {
+    "scale": 1.2,
+    "bubbleFontPt": 18,
+    "bubbleMaxWidthPt": 360,
+    "windowAlwaysOnTop": true
+  },
+  "brain": {
+    "order": ["agy", "cursor", "deepseek", "local", "rules"],
+    "cliPool": [
+      {
+        "id": "agy",
+        "command": "agy",
+        "args": [
+          "-p", "{{PROMPT}}",
+          "--output-format", "json",
+          "--effort", "low",
+          "--sandbox",
+          "--disable-slash-commands",
+          "--print-timeout", "20s"
+        ],
+        "cwd": "runtime/sandbox/agent-cli/agy",
+        "promptVia": "arg",
+        "enabled": true
+      },
+      {
+        "id": "cursor",
+        "command": "cursor-agent",
+        "args": [
+          "-p", "{{PROMPT}}",
+          "--output-format", "json",
+          "--mode", "ask",
+          "--sandbox", "enabled"
+        ],
+        "cwd": "runtime/sandbox/agent-cli/cursor",
+        "promptVia": "arg",
+        "enabled": true
+      }
+    ],
+    "quota": {
+      "exhaustedCooldownMs": 3600000,
+      "probeIntervalMs": 900000,
+      "failuresBeforeBreak": 3,
+      "breakCooldownMs": 60000
+    },
+    "latencyBudgetMs": {
+      "GIFT": 2500,
+      "DANMAKU": 4000,
+      "HOST_TALK": 8000,
+      "COMPANION_CHAT": 15000,
+      "PROACTIVE": 20000,
+      "BATCH_PREGEN": 60000
+    },
+    "hedgeAfterMs": 2500,
+    "deepseek": {
+      "baseUrl": "https://api.deepseek.com",
+      "model": "deepseek-chat",
+      "timeoutMs": 8000,
+      "dailyBudgetCny": 5
+    },
+    "local": {
+      "kind": "ollama",
+      "baseUrl": "http://127.0.0.1:11434",
+      "chatModel": "qwen2.5:14b",
+      "embedModel": "bge-small-zh",
+      "keepAlive": "30m"
+    }
+  },
+  "prompt": {
+    "inputBudgetTokens": 2100,
+    "inputHardLimitTokens": 3000,
+    "maxOutputTokens": 150,
+    "charsPerToken": 1.5
+  },
+  "memory": {
+    "dbPath": "runtime/data/daughter.db",
+    "retrieveTopK": 5,
+    "weights": { "recency": 0.3, "importance": 0.3, "relevance": 0.4 },
+    "recencyDecayPerHour": 0.995,
+    "forgetAfterDays": 7,
+    "forgetImportanceMax": 2,
+    "reflectEveryEpisodes": 50
+  },
+  "emotion": {
+    "baselineMood": 60,
+    "liveMoodFloor": 30,
+    "perViewerMoodCapPerMin": 6,
+    "totalMoodCapPerMin": 15
+  },
+  "live": {
+    "source": "screen-ocr",
+    "screen": {
+      "fps": 2,
+      "windowTitleHint": "直播伴侣",
+      "minConfidence": 0.5
+    },
+    "batchWindowMs": 3000,
+    "maxLlmCallsPerMin": 8,
+    "staleEventMs": 20000,
+    "idleTalkGapSec": 20
+  },
+  "companion": {
+    "idleTalkGapSec": 120,
+    "proactiveIntervalMin": [3, 10],
+    "focusRemindMin": 60
+  },
+  "tts": {
+    "engine": "edge-tts",
+    "voice": "zh-CN-XiaoyiNeural",
+    "pitch": "+18Hz",
+    "rate": "+8%",
+    "localUrl": "http://127.0.0.1:9880/tts"
+  },
+  "console": {
+    "port": 7788
+  },
+  "privacy": {
+    "liveBlockKeywords": ["wesson", "真实姓名", "家庭住址", "工资", "银行卡"]
+  }
+}

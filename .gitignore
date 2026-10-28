@@ -4,6 +4,11 @@ dist/
 build/
 .build/
 runtime/bin/
+runtime/data/
+runtime/temp/
+*.db
+*.db-wal
+*.db-shm
 *.tgz
 *.log
 __pycache__/

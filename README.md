@@ -1,14 +1,94 @@
 <div align="center">
 
-# DSH 大肥鱼 🐋
+# DSH 大肥鱼 🐋 (CyberFish Daughter 独立伴侣与直播版)
 
-**在桌面上陪你工作的 DeepSeek Harness 伴侣。**
+**在桌面上陪你工作、思考与抖音直播的拟人化赛博女儿伴侣。**
 
-[English](README_EN.md) · [npm](https://www.npmjs.com/package/dsh-dafeiyu) · [下载最新版](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest) · [更新日志](CHANGELOG.md)
-
-[![npm](https://img.shields.io/npm/v/dsh-dafeiyu?label=npm)](https://www.npmjs.com/package/dsh-dafeiyu) [![Release](https://img.shields.io/github/v/release/QCYTSN/dsh-dafeiyu)](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest)
+[English](README_EN.md) · [npm](https://www.npmjs.com/package/dsh-dafeiyu) · [更新日志](CHANGELOG.md)
 
 </div>
+
+> 🚀 **v2.0 独立桌面伴侣与抖音直播版全新升级**：
+> 已彻底剥离 DSH / Cordis 宿主依赖！支持独立常驻桌面，具备 **4 级阶梯大脑（Agent CLI 优先 / DeepSeek 流式 / 本地 LLM / 离线规则）**、**SQLite 5 级记忆与直播物理隐私隔离**、**三轴情绪状态机**、**屏幕弹幕 OCR 识别**与**本地主播控制台（http://127.0.0.1:7788）**。
+
+---
+
+## 快速启动 (独立桌面与直播伴侣)
+
+### 1. 编译 macOS 原生端 Helper
+```bash
+# 编译 arm64 + x86_64 通用原生 AppKit 置顶窗口二进制
+npm run build:native
+```
+
+### 2. 语音引擎就绪 (可选，高拟人少女音色)
+```bash
+# 安装微软云端 Edge-TTS (音色: zh-CN-XiaoyiNeural，幼态灵动女声)
+pip3 install edge-tts
+# (若未安装 edge-tts，系统将自动无缝降级使用 macOS 原生 say 离线引擎)
+```
+
+### 3. 一键快捷启动
+```bash
+# 日常桌面陪伴模式 (默认)
+./scripts/launch.sh
+# 或
+npm start
+
+# 抖音直播伴侣模式 (物理隐私隔离 + 弹幕驱动 + 控制台)
+./scripts/launch.sh --live
+# 或
+npm run start:live
+```
+
+### 4. 主播安全控制台
+服务启动后，浏览器访问：
+👉 **`http://127.0.0.1:7788`**
+提供：
+- 🚨 **一键紧急拉闸急停**：清空事件队列、中断正在播放的语音并切回默认待机动作
+- 💬 **人工代她说**：主播输入指定台词与动作，即时打字机展示并语音播放
+- 🍙 **在线投喂**：增加饱食度与心情值
+- 📊 **实时生理指标**：心情、饱食、精力、当前思考引擎与活跃记忆条目监控
+- 🧪 **测试弹幕与礼物注入**：联调测试全链路流式反应与 0-Token 模板应答
+
+---
+
+## 核心架构与特性 (v2.0)
+
+1. **表现层 (Swift Helper Protocol v2)**：
+   - 点名播放 16 组 WebP 动作序列，支持 `maxMs` 动态毫秒级截断与平滑淡出。
+   - 自适应多行、大字号（≥16pt）打字机流式气泡渲染。
+   - 基于 `AVFoundation` 的持久化音频播放队列，支持即时打断插播与 `audio_event` 回调。
+   - 底部 RPG 状态栏实时显示饱食度（🍙）、心情值（❤️）与精力值（⚡）。
+   - `NSWorkspace` 捕获活跃应用类别切换，无轮询感知写代码、浏览器与工作状态。
+
+2. **多级思考大脑 (TieredBrainRouter)**：
+   - **Tier 1 (首选)**：本地 Agent CLI 沙箱池（支持 `agy` 与 `cursor-agent`），安全子目录运行，带 `EXHAUSTED` 额度超限自愈。
+   - **Tier 2**：DeepSeek API SSE 原生流式分词，前缀缓存优化与每日硬限额风控。
+   - **Tier 3**：本地 Ollama / MLX HTTP 大模型离线服务。
+   - **Tier 4**：离线 0ms 零死锁确定性规则语料兜底。
+   - **流式驱动管道**：首行 `<meta clip="..." tone="...">` 即时触发动作，分句标点切词送入 TTS，首字发声延迟实测 **p50 = 694ms**。
+
+3. **分层记忆系统与直播隐私隔离 (SQLite MemoryStore)**：
+   - 基于 Node.js 原生 `node:sqlite`（零 C++ 原生编译依赖），具备 WAL 并发模式与自动迁移。
+   - 贯通 L1 环形工作记忆、L2 增量滚动摘要、L3 情景事件、L4 语义事实库与 L5 睡前第一人称日记。
+   - **直播模式物理级隔离硬红线**：底层 SQL 强制参数化注入 `WHERE (scope IN ('live', 'public'))`，私密记忆绝对不出库。
+   - 观众档案基于编辑距离 Levenshtein ≤ 1 自动识别合并老粉，记录好感度。
+
+4. **拟人化情绪引擎与主动交互 (Persona Engine)**：
+   - 5 态迟滞情绪状态机（`HAPPY`、`TSUNDERE`、`GRUMPY`、`SULKING`、`SLEEPY`），防抖防抖动。
+   - 直播模式强制限制心情下限（≥30）且绝不进入消极罢工的 `SULKING` 态。
+   - 单观众每分钟心情操控钳制（≤ ±6），全场每分钟累计钳制（≤ ±15）。
+   - 内心独白循环（`InnerThoughtLoop`）与 30 句历史滑动窗口防台词重复。
+   - 专注关怀：检测连续写代码达 60 分钟贴心提醒喝水。
+
+5. **屏幕弹幕 OCR 识别与主播安全控制台 (Console & Sensor)**：
+   - 最长公共后缀（LCS）增量去重算法，精准识别滚动弹幕。
+   - 0-Token 模板快速应答点赞、进房与小礼物，快捷动作（摸头/戳一戳/投喂）即时直发。
+   - 输入输出安全守卫：提示词注入攻击拦截、黑名单过滤、主播敏感信息动态遮蔽。
+   - 本地主播控制台（`http://127.0.0.1:7788`）：一键急停清空队列、人工代她说、在线喂小鱼干、实时身体数值监控。
+
+---
 
 大肥鱼由 DSH 插件启动，随 DSH 一起退出。透明、无边框、始终置顶的原生窗口，让你在编辑器、浏览器或其他应用中也能看到 Agent 的工作状态。
 

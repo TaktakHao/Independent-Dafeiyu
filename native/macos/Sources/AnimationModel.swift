@@ -47,6 +47,20 @@ final class AnimationModel {
     private(set) var frameIndex = 0
     private(set) var frameElapsedMs = 0
 
+    // MARK: - Protocol v2 Extensions
+    private(set) var overlayDeadlineMs: Int?
+    private(set) var overlayResumeState: String?
+    private(set) var overlayLoopOverride: Bool?
+    private(set) var isTalking: Bool = false
+
+    var talkClipName: String {
+        clips["talk"] != nil ? "talk" : "working"
+    }
+
+    private var underlayClipName: String {
+        pulseClipName ?? (isTalking ? talkClipName : baseClipName)
+    }
+
     init(manifest: [String: Any]) {
         if let clipsDict = manifest["clips"] as? [String: Any] {
             for (name, value) in clipsDict {
@@ -100,7 +114,12 @@ final class AnimationModel {
             pulseState = nil
             pulseDeadlineMs = nil
             pulseClipName = nil
-            if !Self.dragClips.contains(overlayClipName ?? "") { overlayClipName = nil }
+            if !Self.dragClips.contains(overlayClipName ?? "") {
+                overlayClipName = nil
+                overlayDeadlineMs = nil
+                overlayLoopOverride = nil
+                overlayResumeState = nil
+            }
         }
         if overlayClipName == nil {
             activate(underlayClipName)
@@ -120,9 +139,14 @@ final class AnimationModel {
         let pulseClip = clips[pulseClipName ?? ""]
         let duration = completeClip ? (pulseClip?.frames.count ?? 0) * (pulseClip?.frameMs ?? 0) : 0
         pulseDeadlineMs = max(nowMs + ttlMs, previousDeadline ?? nowMs + duration)
-        if !Self.dragClips.contains(overlayClipName ?? "") { overlayClipName = nil }
+        if !Self.dragClips.contains(overlayClipName ?? "") {
+            overlayClipName = nil
+            overlayDeadlineMs = nil
+            overlayLoopOverride = nil
+            overlayResumeState = nil
+        }
         if overlayClipName == nil {
-            activate(pulseClipName ?? baseClipName)
+            activate(pulseClipName ?? underlayClipName)
         }
     }
 
@@ -130,12 +154,59 @@ final class AnimationModel {
     func playOverlay(_ clipName: String) -> Bool {
         guard clips[clipName] != nil else { return false }
         overlayClipName = clipName
+        overlayDeadlineMs = nil
+        overlayLoopOverride = nil
+        overlayResumeState = nil
         activate(clipName)
         return true
     }
 
+    @discardableResult
+    func playClip(
+        _ clipName: String,
+        maxMs: Int? = nil,
+        loop: Bool? = nil,
+        resumeState: String? = nil,
+        nowMs: Int = 0
+    ) -> Bool {
+        guard clips[clipName] != nil else { return false }
+        overlayClipName = clipName
+        overlayLoopOverride = loop
+
+        if let maxMs = maxMs, maxMs > 0 {
+            overlayDeadlineMs = nowMs + maxMs
+        } else {
+            overlayDeadlineMs = nil
+        }
+
+        if let resume = resumeState, Self.states.contains(resume) {
+            overlayResumeState = resume
+        } else {
+            overlayResumeState = nil
+        }
+
+        activate(clipName)
+        return true
+    }
+
+    func setTalking(_ on: Bool) {
+        guard isTalking != on else { return }
+        isTalking = on
+        if overlayClipName == nil && pulseState == nil {
+            activate(underlayClipName)
+        }
+    }
+
     func clearOverlay() {
         overlayClipName = nil
+        overlayDeadlineMs = nil
+        overlayLoopOverride = nil
+        if let resume = overlayResumeState {
+            baseState = resume
+            baseActivity = nil
+            baseClipName = clip(for: resume, activity: nil)
+            overlayResumeState = nil
+        }
         activate(underlayClipName)
     }
 
@@ -170,9 +241,15 @@ final class AnimationModel {
             pulseDeadlineMs = nil
             pulseClipName = nil
             if overlayClipName == nil {
-                activate(baseClipName)
+                activate(underlayClipName)
                 elapsed = 0
             }
+        }
+
+        // 截断检查：如果 overlay 达到 maxMs 设定的 deadline，立刻结束 overlay 并触发恢复
+        if overlayClipName != nil, let deadline = overlayDeadlineMs, nowMs >= deadline {
+            clearOverlay()
+            elapsed = 0
         }
 
         let clip = activeClip
@@ -180,13 +257,14 @@ final class AnimationModel {
         let total = frameElapsedMs + elapsed
         let nextFrame = frameIndex + total / clip.frameMs
         frameElapsedMs = total % clip.frameMs
+
+        let isLooping = overlayLoopOverride ?? clip.loop
         if nextFrame < clip.frames.count {
             frameIndex = nextFrame
-        } else if clip.loop {
+        } else if isLooping {
             frameIndex = nextFrame % clip.frames.count
         } else if overlayClipName != nil {
-            overlayClipName = nil
-            activate(underlayClipName)
+            clearOverlay()
         } else {
             frameIndex = clip.frames.count - 1
             frameElapsedMs = 0
@@ -198,10 +276,6 @@ final class AnimationModel {
             return mapped
         }
         return stateMap[state] ?? stateMap["IDLE"] ?? baseClipName
-    }
-
-    private var underlayClipName: String {
-        pulseClipName ?? baseClipName
     }
 
     private func activate(_ clipName: String) {

@@ -24,6 +24,17 @@ final class PetPanel: NSPanel {
     }
 }
 
+/// 表示自适应多行对话气泡的状态模型
+struct SpeechBubbleState {
+    let id: String
+    let text: String
+    let style: String?
+    let typewriter: Bool
+    let holdMs: Int
+    let createdMs: Int
+    var typingDurationMs: Int
+}
+
 final class PetController: NSObject {
     static let labels: [String: String] = [
         "IDLE": "休息中",
@@ -96,6 +107,15 @@ final class PetController: NSObject {
     var overlayDeadlineMs: Int?
     var task = ""
     var tasks: [[String: Any]] = []
+
+    // MARK: - Protocol v2 State & Sensors
+    private var activeSpeech: SpeechBubbleState?
+    private var speechElapsedMs: Int = 0
+    private var statusBarText: String = ""
+    private var workspaceObserver: NSObjectProtocol?
+    private var lockObserver: NSObjectProtocol?
+    private var unlockObserver: NSObjectProtocol?
+    private var lastActiveBundleId: String?
 
     // Geometry (pet anchor in AppKit bottom-left coordinates)
     private var petX: CGFloat = 0
@@ -170,6 +190,8 @@ final class PetController: NSObject {
             buildWindow()
             restorePosition()
             startTimers()
+            startSensors()
+            setupAudioPlayerBinding()
             NotificationCenter.default.addObserver(
                 self,
                 selector: #selector(screenParametersChanged),
@@ -207,7 +229,38 @@ final class PetController: NSObject {
     private var petWidth: CGFloat { maxFrameWidth * scale }
     private var petHeight: CGFloat { maxFrameHeight * scale }
 
+    private var speechFontSize: CGFloat {
+        max(16.0, 18.0 * bubbleScale)
+    }
+
+    private func measureSpeechBubble(text: String) -> CGSize {
+        let maxWidth: CGFloat = max(340, min(420 * bubbleScale, 460))
+        let horizontalPadding: CGFloat = 20 * bubbleScale
+        let availableTextWidth = max(200, maxWidth - (horizontalPadding * 2))
+
+        let font = NSFont.systemFont(ofSize: speechFontSize, weight: .medium)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 4 * bubbleScale
+        paragraph.lineBreakMode = .byWordWrapping
+
+        let rect = (text as NSString).boundingRect(
+            with: CGSize(width: availableTextWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font, .paragraphStyle: paragraph]
+        )
+
+        let contentWidth = min(maxWidth, max(220 * bubbleScale, ceil(rect.width) + horizontalPadding * 2))
+        var contentHeight = ceil(rect.height) + (34 * bubbleScale)
+        if !statusBarText.isEmpty {
+            contentHeight += (28 * bubbleScale)
+        }
+        return CGSize(width: contentWidth, height: max(68 * bubbleScale, contentHeight))
+    }
+
     private var cardHeightPoints: CGFloat {
+        if let speech = activeSpeech {
+            return measureSpeechBubble(text: speech.text).height
+        }
         let footer: CGFloat = balanceSummary.isEmpty ? 0 : 28
         if tasks.count >= 2 {
             let rows = min(tasks.count, 3)
@@ -216,13 +269,15 @@ final class PetController: NSObject {
         return (84 + footer) * bubbleScale
     }
 
-    private var cardWidthPoints: CGFloat { 420 * bubbleScale }
+    private var cardWidthPoints: CGFloat {
+        if let speech = activeSpeech {
+            return measureSpeechBubble(text: speech.text).width
+        }
+        return 420 * bubbleScale
+    }
 
     private func windowSize() -> NSSize {
-        // A hidden card must not keep the window as wide as a 420pt card:
-        // at scale 0.55 that left roughly 385pt of mostly transparent window
-        // around a ~219pt character (issue #92).
-        let showsCard = bubbleMode != "hidden"
+        let showsCard = bubbleVisible()
         return NSSize(
             width: showsCard ? max(petWidth + 50, cardWidthPoints + 28) : petWidth + 50,
             height: petHeight + (showsCard ? cardHeightPoints + 34 : 26)
@@ -458,6 +513,14 @@ final class PetController: NSObject {
         if let deadline = overlayDeadlineMs, now >= deadline {
             clearOverlay()
         }
+        if let speech = activeSpeech {
+            speechElapsedMs += elapsed
+            let totalLifetime = speech.typingDurationMs + speech.holdMs
+            if speechElapsedMs >= totalLifetime {
+                activeSpeech = nil
+                resizeAndReposition()
+            }
+        }
         if animTimer?.timeInterval != animationInterval {
             startAnimTimer()
         }
@@ -543,20 +606,36 @@ final class PetController: NSObject {
     }
 
     func handleClick(at point: NSPoint, clickCount: Int) {
+        let clipName: String
+        let message: String
         if clickCount >= 2 {
-            playInteraction("head_pat", message: "好啦好啦，知道你喜欢我~")
-            return
-        }
-        let rect = petRect()
-        let relativeX = max(0, point.x - rect.minX)
-        let relativeY = max(0, point.y - rect.minY)
-        if relativeY < rect.height * 0.45 {
-            playInteraction("head_pat", message: "摸摸也不能让我少干活哦~")
-        } else if relativeX > rect.width * 0.72 {
-            playInteraction("tail", message: "尾巴不是进度条啦！")
+            clipName = "head_pat"
+            message = "好啦好啦，知道你喜欢我~"
         } else {
-            playInteraction("poke", message: "戳我干嘛，任务还在跑呢")
+            let rect = petRect()
+            let relativeX = max(0, point.x - rect.minX)
+            let relativeY = max(0, point.y - rect.minY)
+            if relativeY < rect.height * 0.45 {
+                clipName = "head_pat"
+                message = "摸摸也不能让我少干活哦~"
+            } else if relativeX > rect.width * 0.72 {
+                clipName = "tail"
+                message = "尾巴不是进度条啦！"
+            } else {
+                clipName = "poke"
+                message = "戳我干嘛，任务还在跑呢"
+            }
         }
+
+        // 上报 user_touch 传感器事件给 Core 调度器
+        ProtocolIO.shared.write([
+            "protocolVersion": 2,
+            "kind": "user_touch",
+            "clip": clipName,
+            "timestamp": Self.nowMs()
+        ])
+
+        playInteraction(clipName, message: message)
         contentView?.needsDisplay = true
     }
 
@@ -710,12 +789,58 @@ final class PetController: NSObject {
             balanceSummary = String((message["summary"] as? String ?? "").prefix(200))
             resizeAndReposition()
             contentView?.needsDisplay = true
+        case "play":
+            handlePlay(message)
+        case "speak":
+            handleSpeak(message)
+        case "status_bar":
+            statusBarText = Self.stringValue(message["text"]) ?? ""
+            resizeAndReposition()
+            contentView?.needsDisplay = true
+        case "talking":
+            let on = (message["on"] as? Bool) ?? false
+            model.setTalking(on)
+            syncFrameTransition(previousFrame: previousFrame, previousClip: previousClip)
+            contentView?.needsDisplay = true
         default:
             break
         }
         syncFrameTransition(previousFrame: previousFrame, previousClip: previousClip)
         if previousState != model.baseState { scheduleMicro() }
         maybeSaveSnapshot()
+    }
+
+    private func handlePlay(_ message: [String: Any]) {
+        guard let clip = Self.stringValue(message["clip"]) else { return }
+        let maxMs = Self.intValue(message["maxMs"])
+        let loop = message["loop"] as? Bool
+        let resumeState = Self.stringValue(message["resumeState"])
+        let previousFrame = model.frame
+        let previousClip = model.activeClipName
+        model.playClip(clip, maxMs: maxMs, loop: loop, resumeState: resumeState, nowMs: Self.nowMs())
+        syncFrameTransition(previousFrame: previousFrame, previousClip: previousClip)
+        contentView?.needsDisplay = true
+    }
+
+    private func handleSpeak(_ message: [String: Any]) {
+        let id = Self.stringValue(message["id"]) ?? "utt-\(Self.nowMs())"
+        let text = Self.stringValue(message["text"]) ?? ""
+        let style = Self.stringValue(message["style"])
+        let typewriter = message["typewriter"] as? Bool ?? true
+        let holdMs = Self.intValue(message["holdMs"]) ?? 1500
+        let typingDuration = typewriter ? max(500, text.count * 50) : 0
+        activeSpeech = SpeechBubbleState(
+            id: id,
+            text: text,
+            style: style,
+            typewriter: typewriter,
+            holdMs: holdMs,
+            createdMs: Self.nowMs(),
+            typingDurationMs: typingDuration
+        )
+        speechElapsedMs = 0
+        resizeAndReposition()
+        contentView?.needsDisplay = true
     }
 
     private func handleState(_ message: [String: Any]) {
@@ -816,9 +941,73 @@ final class PetController: NSObject {
         }
     }
 
+    private func setupAudioPlayerBinding() {
+        AudioPlayer.shared.onPlaybackStateChanged = { [weak self] isPlaying in
+            guard let self = self else { return }
+            let prevFrame = self.model.frame
+            let prevClip = self.model.activeClipName
+            self.model.setTalking(isPlaying)
+            self.syncFrameTransition(previousFrame: prevFrame, previousClip: prevClip)
+            self.contentView?.needsDisplay = true
+        }
+    }
+
+    private func startSensors() {
+        // 1. 前台活跃应用感知 (零轮询)
+        workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self = self else { return }
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+            let bundleId = app.bundleIdentifier ?? ""
+            let name = app.localizedName ?? ""
+            guard bundleId != Bundle.main.bundleIdentifier, bundleId != self.lastActiveBundleId else { return }
+            self.lastActiveBundleId = bundleId
+            ProtocolIO.shared.write([
+                "protocolVersion": 2,
+                "kind": "front_app",
+                "bundleId": bundleId,
+                "name": name,
+                "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+            ])
+        }
+
+        // 2. 屏幕锁定与解锁感知
+        lockObserver = DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.apple.screenIsLocked"),
+            object: nil,
+            queue: .main
+        ) { _ in
+            ProtocolIO.shared.write([
+                "protocolVersion": 2,
+                "kind": "screen_lock",
+                "locked": true,
+                "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+            ])
+        }
+
+        unlockObserver = DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.apple.screenIsUnlocked"),
+            object: nil,
+            queue: .main
+        ) { _ in
+            ProtocolIO.shared.write([
+                "protocolVersion": 2,
+                "kind": "screen_lock",
+                "locked": false,
+                "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+            ])
+        }
+    }
+
     func quit(reason: String, reportClosed: Bool = true) {
         guard !quitting else { return }
         quitting = true
+        if let obs = workspaceObserver { NSWorkspace.shared.notificationCenter.removeObserver(obs) }
+        if let obs = lockObserver { DistributedNotificationCenter.default().removeObserver(obs) }
+        if let obs = unlockObserver { DistributedNotificationCenter.default().removeObserver(obs) }
         saveLayout()
         animTimer?.invalidate()
         keepFrontTimer?.invalidate()
@@ -871,6 +1060,8 @@ final class PetController: NSObject {
     }
 
     private func bubbleVisible() -> Bool {
+        if activeSpeech != nil { return true }
+        if !statusBarText.isEmpty && bubbleMode != "hidden" { return true }
         if bubbleMode == "hidden" { return false }
         if bubbleMode == "always" { return true }
         if tasks.count >= 2 {
@@ -966,19 +1157,89 @@ final class PetController: NSObject {
     func drawCard(in view: NSView) {
         guard bubbleVisible() else { return }
         let rect = bubbleRect()
-        if tasks.count >= 2 {
+        if let speech = activeSpeech {
+            drawSpeechBubble(rect: rect, speech: speech)
+        } else if tasks.count >= 2 {
             drawTaskCard(rect: rect)
         } else if let card = currentCard() {
             drawStatusCard(rect: rect, card: card)
-        } else if !balanceSummary.isEmpty {
-            drawStatusCard(rect: rect, card: ("大肥鱼陪你待命", "DSH · 等待下一次任务", "IDLE"))
+        } else if !balanceSummary.isEmpty || !statusBarText.isEmpty {
+            let title = !statusBarText.isEmpty ? "大肥鱼桌面伴侣" : "大肥鱼陪你待命"
+            let detail = !statusBarText.isEmpty ? statusBarText : "DSH · 等待下一次任务"
+            drawStatusCard(rect: rect, card: (title, detail, "IDLE"))
         }
-        if !balanceSummary.isEmpty {
+        if !balanceSummary.isEmpty && activeSpeech == nil {
             drawText(balanceSummary,
                      in: NSRect(x: rect.minX + 16 * bubbleScale, y: rect.maxY - 31 * bubbleScale,
                                 width: rect.width - 32 * bubbleScale, height: 23 * bubbleScale),
                      font: NSFont.systemFont(ofSize: 9 * max(1, bubbleScale)),
                      color: Self.hex("#53616F"))
+        }
+    }
+
+    private func currentSpeechDisplayText() -> String {
+        guard let speech = activeSpeech else { return "" }
+        guard speech.typewriter && speech.typingDurationMs > 0 else { return speech.text }
+        let progress = min(1.0, Double(speechElapsedMs) / Double(speech.typingDurationMs))
+        let count = max(1, Int(Double(speech.text.count) * progress))
+        return String(speech.text.prefix(count))
+    }
+
+    private func drawSpeechBubble(rect: NSRect, speech: SpeechBubbleState) {
+        let s = bubbleScale
+        let corner: CGFloat = 16 * s
+
+        // 1. 双层柔和阴影
+        NSColor(calibratedWhite: 0.05, alpha: 0.06).setFill()
+        NSBezierPath(roundedRect: NSRect(x: rect.minX + 1, y: rect.minY + 5, width: rect.width - 2, height: rect.height),
+                     xRadius: corner, yRadius: corner).fill()
+        NSColor(calibratedWhite: 0.08, alpha: 0.08).setFill()
+        NSBezierPath(roundedRect: NSRect(x: rect.minX, y: rect.minY + 2, width: rect.width, height: rect.height),
+                     xRadius: corner, yRadius: corner).fill()
+
+        // 2. 主气泡底色
+        let bubblePath = NSBezierPath(roundedRect: rect, xRadius: corner, yRadius: corner)
+        NSColor(calibratedRed: 0.99, green: 0.99, blue: 1.0, alpha: 0.98).setFill()
+        bubblePath.fill()
+        NSColor(calibratedWhite: 0.82, alpha: 0.85).setStroke()
+        bubblePath.lineWidth = 1.2
+        bubblePath.stroke()
+
+        // 3. 多行正文大字号排版 (>= 16pt)
+        let paddingH: CGFloat = 18 * s
+        let paddingV: CGFloat = 16 * s
+        let footerHeight: CGFloat = statusBarText.isEmpty ? 0 : 28 * s
+        let textRect = NSRect(
+            x: rect.minX + paddingH,
+            y: rect.minY + paddingV,
+            width: rect.width - (paddingH * 2),
+            height: max(20, rect.height - (paddingV * 2) - footerHeight)
+        )
+
+        let font = NSFont.systemFont(ofSize: speechFontSize, weight: .medium)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 4 * s
+        paragraph.lineBreakMode = .byWordWrapping
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: Self.hex("#1E293B"),
+            .paragraphStyle: paragraph,
+        ]
+        (currentSpeechDisplayText() as NSString).draw(in: textRect, withAttributes: attributes)
+
+        // 4. 底部 RPG 状态栏
+        if !statusBarText.isEmpty {
+            let dividerY = rect.maxY - footerHeight
+            strokeLine(from: NSPoint(x: rect.minX + 14 * s, y: dividerY),
+                       to: NSPoint(x: rect.maxX - 14 * s, y: dividerY),
+                       width: 0.8,
+                       color: Self.hex("#E2E8F0"))
+
+            let statusFont = NSFont.systemFont(ofSize: max(10.0, 11.0 * s), weight: .regular)
+            drawText(statusBarText,
+                     in: NSRect(x: rect.minX + paddingH, y: dividerY + 5 * s, width: rect.width - (paddingH * 2), height: 18 * s),
+                     font: statusFont,
+                     color: Self.hex("#64748B"))
         }
     }
 

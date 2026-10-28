@@ -18,6 +18,7 @@ PACKAGE_VERSION="$(node -p "require('$ROOT/package.json').version")"
 
 SOURCES=(
   "$DIR/Sources/AnimationModel.swift" \
+  "$DIR/Sources/AudioPlayer.swift" \
   "$DIR/Sources/LayoutStore.swift" \
   "$DIR/Sources/PetGeometry.swift" \
   "$DIR/Sources/Permissions.swift" \
@@ -30,6 +31,7 @@ FRAMEWORKS=(
   -framework UserNotifications \
   -framework ApplicationServices \
   -framework QuartzCore \
+  -framework AVFoundation \
 )
 
 echo "building arm64 slice (macOS 12+)..."

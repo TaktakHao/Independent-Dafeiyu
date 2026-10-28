@@ -56,10 +56,12 @@ const snapshotMessageKinds = new Set([
   CompanionMessageKind.TASKS,
   CompanionMessageKind.CONFIG,
   CompanionMessageKind.BALANCE,
+  CompanionMessageKind.STATUS_BAR,
 ])
 const coalescibleMessageKinds = new Set([
   ...snapshotMessageKinds,
   CompanionMessageKind.PULSE,
+  CompanionMessageKind.TALKING,
 ])
 
 function isWsl() {
@@ -625,6 +627,7 @@ export class HelperProcess {
     if (message.kind === CompanionMessageKind.TASKS) this.snapshot.set('tasks', encodeMessage(message))
     if (message.kind === CompanionMessageKind.CONFIG) this.snapshot.set('config', encodeMessage(message))
     if (message.kind === CompanionMessageKind.BALANCE) this.snapshot.set('balance', encodeMessage(message))
+    if (message.kind === CompanionMessageKind.STATUS_BAR) this.snapshot.set('status_bar', encodeMessage(message))
   }
 
   #flushSnapshot() {
@@ -673,7 +676,8 @@ export class HelperProcess {
     if (!line.trim()) return
     try {
       const reply = JSON.parse(line)
-      if (reply?.protocolVersion === 1 && reply.kind === CompanionMessageKind.READY) {
+      const isSupportedVersion = reply?.protocolVersion === 1 || reply?.protocolVersion === 2
+      if (isSupportedVersion && reply.kind === CompanionMessageKind.READY) {
         if (this.spawned) return
         const firstSpawn = !this.hasEverSpawned
         this.hasEverSpawned = true
@@ -689,19 +693,40 @@ export class HelperProcess {
         }
         this.#startHeartbeat()
         if (this.stopping) this.#endInput(this.child)
+        this.options.onReady?.(reply)
         return
       }
-      if (reply?.protocolVersion === 1 && reply.kind === CompanionMessageKind.PONG) {
+      if (isSupportedVersion && reply.kind === CompanionMessageKind.PONG) {
         this.lastPongAt = Date.now()
         return
       }
-      if (reply?.protocolVersion === 1 && reply.kind === CompanionMessageKind.CLOSED) {
+      if (isSupportedVersion && reply.kind === CompanionMessageKind.CLOSED) {
         this.restartSuppressed = true
+        this.options.onClosed?.(reply)
         return
       }
-      if (reply?.protocolVersion === 1 && reply.kind === CompanionMessageKind.SETTINGS) {
+      if (isSupportedVersion && reply.kind === CompanionMessageKind.SETTINGS) {
         this.options.onSettingsChange?.(reply)
         return
+      }
+      if (isSupportedVersion) {
+        if (reply.kind === CompanionMessageKind.AUDIO_EVENT) {
+          this.options.onAudioEvent?.(reply)
+          return
+        }
+        if (reply.kind === CompanionMessageKind.FRONT_APP) {
+          this.options.onFrontApp?.(reply)
+          return
+        }
+        if (reply.kind === CompanionMessageKind.SCREEN_LOCK) {
+          this.options.onScreenLock?.(reply)
+          return
+        }
+        if (reply.kind === CompanionMessageKind.USER_TOUCH) {
+          this.options.onUserTouch?.(reply)
+          return
+        }
+        this.options.onMessage?.(reply)
       }
     } catch {
       // Non-protocol stdout is still useful in development logs.

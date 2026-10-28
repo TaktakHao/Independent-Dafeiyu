@@ -106,31 +106,47 @@ if headless {
         "kind": "ready",
         "timestamp": currentTimestamp(),
     ])
-    while let line = readLine() {
-        guard !line.isEmpty else { continue }
-        guard let data = line.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              (object["protocolVersion"] as? Int) == 1 else {
-            ProtocolIO.shared.write([
-                "protocolVersion": 1,
-                "kind": "error",
-                "message": "invalid json",
-            ])
-            continue
+    let stdinQueue = DispatchQueue(label: "dsh-dafeiyu.stdin.headless")
+    stdinQueue.async {
+        while let line = readLine() {
+            guard !line.isEmpty else { continue }
+            guard let data = line.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let version = object["protocolVersion"] as? Int,
+                  (version == 1 || version == 2) else {
+                ProtocolIO.shared.write([
+                    "protocolVersion": 1,
+                    "kind": "error",
+                    "message": "invalid json",
+                ])
+                continue
+            }
+            appendEventLog(object, to: eventLogURL)
+            let kind = object["kind"] as? String
+            if kind == "ping" {
+                ProtocolIO.shared.write([
+                    "protocolVersion": version,
+                    "kind": "pong",
+                    "timestamp": currentTimestamp(),
+                ])
+            }
+            DispatchQueue.main.async {
+                if kind == "audio" {
+                    AudioPlayer.shared.handleAudio(object)
+                } else if kind == "audio_stop" {
+                    AudioPlayer.shared.stop()
+                } else if kind == "shutdown" {
+                    AudioPlayer.shared.stop()
+                    exit(0)
+                }
+            }
         }
-        appendEventLog(object, to: eventLogURL)
-        if (object["kind"] as? String) == "ping" {
-            ProtocolIO.shared.write([
-                "protocolVersion": 1,
-                "kind": "pong",
-                "timestamp": currentTimestamp(),
-            ])
-        }
-        if (object["kind"] as? String) == "shutdown" {
-            break
+        DispatchQueue.main.async {
+            AudioPlayer.shared.stop()
+            exit(0)
         }
     }
-    exit(0)
+    CFRunLoopRun()
 }
 
 let controller = PetController(
@@ -156,7 +172,8 @@ stdinQueue.async {
         guard !line.isEmpty else { continue }
         guard let data = line.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              (object["protocolVersion"] as? Int) == 1 else {
+              let version = object["protocolVersion"] as? Int,
+              (version == 1 || version == 2) else {
             ProtocolIO.shared.write([
                 "protocolVersion": 1,
                 "kind": "error",
@@ -164,18 +181,29 @@ stdinQueue.async {
             ])
             continue
         }
-        if (object["kind"] as? String) == "ping" {
+        appendEventLog(object, to: eventLogURL)
+        let kind = object["kind"] as? String
+        if kind == "ping" {
             ProtocolIO.shared.write([
-                "protocolVersion": 1,
+                "protocolVersion": version,
                 "kind": "pong",
                 "timestamp": currentTimestamp(),
             ])
         }
         DispatchQueue.main.async {
-            controller.apply(object)
+            switch kind {
+            case "audio":
+                AudioPlayer.shared.handleAudio(object)
+            case "audio_stop":
+                AudioPlayer.shared.stop()
+                controller.apply(object)
+            default:
+                controller.apply(object)
+            }
         }
     }
     DispatchQueue.main.async {
+        AudioPlayer.shared.stop()
         controller.quit(reason: "stdin-eof", reportClosed: false)
     }
 }
