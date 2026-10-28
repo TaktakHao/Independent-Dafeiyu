@@ -62,7 +62,7 @@ final class PetController: NSObject {
     let assetRoot: URL
     let layoutURL: URL
     var webuiURL: String
-    var openLabel = ProcessInfo.processInfo.environment["DSH_DAFEIYU_OPEN_LABEL"] ?? "打开 DSH"
+    var openLabel = ProcessInfo.processInfo.environment["DSH_DAFEIYU_OPEN_LABEL"] ?? "打开控制台"
     var balanceSummary = ""
     let eventLogURL: URL?
     let snapshotURL: URL?
@@ -98,8 +98,8 @@ final class PetController: NSObject {
     // Durable status
     var displayState = "IDLE"
     var statusState = "IDLE"
-    var statusMessage = "我在这儿等新任务哦"
-    var statusDetail = "DSH · 等待下一次任务"
+    var statusMessage = "大肥鱼陪伴中"
+    var statusDetail = "随时随地陪老爸聊天"
     var statusDeadlineMs: Int?
     var overlayState: String?
     var overlayMessage = ""
@@ -392,7 +392,7 @@ final class PetController: NSObject {
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = false
         panel.isMovableByWindowBackground = false
-        panel.title = "DSH 大肥鱼"
+        panel.title = "大肥鱼桌面伴侣"
 
         let view = PetView(frame: NSRect(x: 0, y: 0, width: size.width, height: size.height))
         view.controller = self
@@ -651,7 +651,7 @@ final class PetController: NSObject {
 
     func showMenu(with event: NSEvent) {
         guard let contentView = contentView else { return }
-        let menu = NSMenu(title: "DSH 大肥鱼")
+        let menu = NSMenu(title: "大肥鱼桌面伴侣")
 
         let sizeMenu = NSMenu(title: "大小")
         for (label, value) in [("迷你", 0.6), ("小", 0.8), ("标准", 1.0), ("大", 1.25)] {
@@ -745,8 +745,8 @@ final class PetController: NSObject {
         if let url = URL(string: webuiURL), NSWorkspace.shared.open(url) {
             return
         }
-        FileHandle.standardError.write(Data("Unable to open the configured DSH client\n".utf8))
-        showOverlay("无法打开 DSH", "请确认 DSH 已安装、打开地址设置正确", "ERROR", 4000)
+        FileHandle.standardError.write(Data("Unable to open the configured control panel\n".utf8))
+        showOverlay("无法打开控制台", "请确认控制台服务已启动 (http://127.0.0.1:7788)", "ERROR", 4000)
         contentView?.needsDisplay = true
     }
 
@@ -1086,7 +1086,7 @@ final class PetController: NSObject {
         guard Bundle.main.bundleIdentifier != nil else { return }
         let content = UNMutableNotificationContent()
         content.title = state == "SUCCESS" ? "任务完成" : "任务出错"
-        content.body = state == "SUCCESS" ? "DSH 任务已完成" : "DSH 任务遇到问题"
+        content.body = state == "SUCCESS" ? "大肥鱼任务已完成" : "大肥鱼遇到了一点问题"
         content.sound = soundEnabled ? .default : nil
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request) { error in
@@ -1165,7 +1165,7 @@ final class PetController: NSObject {
             drawStatusCard(rect: rect, card: card)
         } else if !balanceSummary.isEmpty || !statusBarText.isEmpty {
             let title = !statusBarText.isEmpty ? "大肥鱼桌面伴侣" : "大肥鱼陪你待命"
-            let detail = !statusBarText.isEmpty ? statusBarText : "DSH · 等待下一次任务"
+            let detail = !statusBarText.isEmpty ? statusBarText : "随时随地陪老爸聊天"
             drawStatusCard(rect: rect, card: (title, detail, "IDLE"))
         }
         if !balanceSummary.isEmpty && activeSpeech == nil {

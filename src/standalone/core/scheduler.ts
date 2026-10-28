@@ -37,11 +37,19 @@ export class RuntimeScheduler extends EventEmitter {
     if (this.helper || this.isShuttingDown) return
     this.state.setConnectionStatus('starting')
 
+    const webPort = this.config.webPort ?? 7788
+    const helperEnv = {
+      ...process.env,
+      DSH_DAFEIYU_OPEN_LABEL: '打开控制台',
+      DSH_DAFEIYU_WEBUI_URL: `http://127.0.0.1:${webPort}/`,
+      ...this.config.env,
+    }
+
     this.helper = new HelperProcess({
       headless: this.config.headless ?? false,
       command: this.config.command,
       args: this.config.args,
-      env: this.config.env,
+      env: helperEnv,
       heartbeatMs: this.config.heartbeatMs ?? 5000,
       heartbeatTimeoutMs: this.config.heartbeatTimeoutMs ?? 15000,
       startupTimeoutMs: this.config.startupTimeoutMs ?? 60000,
@@ -49,6 +57,13 @@ export class RuntimeScheduler extends EventEmitter {
       maxStartFailures: this.config.maxStartFailures ?? 5,
       onReady: () => {
         this.state.setConnectionStatus('ready')
+        const isLive = this.state.getMode() === 'live'
+        const initialMsg = createMessage(CompanionMessageKind.STATE, {
+          state: 'IDLE',
+          message: isLive ? '大肥鱼直播中' : '大肥鱼陪伴中',
+          detail: isLive ? '直播模式 · 弹幕待命中' : '老爸好呀 · 随时聊聊',
+        })
+        this.helper.send(initialMsg)
         this.syncStatusBar()
         this.emit('helper_ready')
       },

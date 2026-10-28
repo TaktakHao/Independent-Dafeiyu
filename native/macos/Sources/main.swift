@@ -97,7 +97,7 @@ let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 
 let environment = ProcessInfo.processInfo.environment
-let webuiURL = environment["DSH_DAFEIYU_WEBUI_URL"] ?? "http://127.0.0.1:3080/"
+let webuiURL = environment["DSH_DAFEIYU_WEBUI_URL"] ?? "http://127.0.0.1:7788/"
 let model = AnimationModel(manifest: assets.manifest)
 
 if headless {
