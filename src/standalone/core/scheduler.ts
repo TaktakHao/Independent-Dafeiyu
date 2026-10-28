@@ -61,7 +61,7 @@ export class RuntimeScheduler extends EventEmitter {
         const initialMsg = createMessage(CompanionMessageKind.STATE, {
           state: 'IDLE',
           message: isLive ? '大肥鱼直播中' : '大肥鱼陪伴中',
-          detail: isLive ? '直播模式 · 弹幕待命中' : '老爸好呀 · 随时聊聊',
+          detail: isLive ? '直播模式 · 弹幕待命中' : '随时随地陪你聊天',
         })
         this.helper.send(initialMsg)
         this.syncStatusBar()
@@ -162,6 +162,16 @@ export class RuntimeScheduler extends EventEmitter {
     this.state.setTalking(on)
     if (!this.helper) return
     const msg = createMessage(CompanionMessageKind.TALKING, { on })
+    this.helper.send(msg)
+  }
+
+  updateStateCard(options: { state?: string; message?: string; detail?: string }): void {
+    if (!this.helper) return
+    const msg = createMessage(CompanionMessageKind.STATE, {
+      state: options.state ?? 'IDLE',
+      message: options.message ?? '大肥鱼陪伴中',
+      detail: options.detail ?? '随时随地陪你聊天',
+    })
     this.helper.send(msg)
   }
 

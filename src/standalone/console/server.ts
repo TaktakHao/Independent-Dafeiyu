@@ -119,7 +119,7 @@ export class ConsoleServer extends EventEmitter {
         mood: Math.min(100, this.state.getStats().mood + 5),
       })
       await this.scheduler.playClip({ clip: 'eat_token', maxMs: 3500 })
-      await this.scheduler.speakText({ text: '嗷呜！老爸投喂的小鱼干真香！', typewriter: true })
+      await this.scheduler.speakText({ text: '嗷呜！投喂的小鱼干真香！饱食度增加啦~', typewriter: true })
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ success: true, stats: this.state.getStats() }))
       return
@@ -190,7 +190,7 @@ export class ConsoleServer extends EventEmitter {
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>🐋 CyberFish Daughter 主播安全控制台</title>
+  <title>🐋 CyberFish 大肥鱼桌面伴侣终端</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     :root {
@@ -303,22 +303,22 @@ export class ConsoleServer extends EventEmitter {
 </head>
 <body>
   <div class="header">
-    <h1>🐋 大肥鱼主播与日常陪伴控制台</h1>
+    <h1>🐋 大肥鱼桌面伴侣终端</h1>
     <span class="badge" id="modeBadge">陪伴模式</span>
   </div>
 
   <div class="grid">
-    <!-- 爸爸与女儿打字聊天 (陪伴模式专用) -->
+    <!-- 伴侣即时对话 -->
     <div class="card" style="grid-column: 1 / -1;">
-      <h2>💬 爸爸与女儿聊天 (日常陪伴模式 · 驱动桌宠动作与真实发声)</h2>
+      <h2>💬 伴侣即时对话 (驱动桌面动作与拟人语音)</h2>
       <div class="chat-container" id="chatLogs">
         <div class="chat-msg daughter">
           <div class="chat-meta">🐋 大肥鱼</div>
-          老爸你来啦！今天在 Antigravity 和 Cursor 里写什么好玩的代码呢？快跟我讲讲~
+          你来啦！今天在 Antigravity 和 Cursor 里写什么好玩的代码呢？快跟我讲讲~
         </div>
       </div>
       <div style="display: flex; gap: 8px;">
-        <input type="text" id="chatInput" class="input-box" style="margin-bottom: 0;" placeholder="跟女儿说点什么... (按 Enter 发送)" onkeydown="if(event.key==='Enter') sendChat()" />
+        <input type="text" id="chatInput" class="input-box" style="margin-bottom: 0;" placeholder="输入对话内容... (按 Enter 发送)" onkeydown="if(event.key==='Enter') sendChat()" />
         <button class="btn btn-primary" style="white-space: nowrap;" id="sendBtn" onclick="sendChat()">发送</button>
       </div>
     </div>
@@ -335,7 +335,7 @@ export class ConsoleServer extends EventEmitter {
 
     <!-- 状态监控 -->
     <div class="card">
-      <h2>📊 女儿当前身体状态</h2>
+      <h2>📊 伴侣当前身体状态</h2>
       <div class="stats-bar"><span>🍙 饱食度</span><span id="hungerVal">--%</span></div>
       <div class="progress"><div class="progress-fill" id="hungerFill" style="background: #f59e0b; width: 0%;"></div></div>
 
@@ -350,8 +350,8 @@ export class ConsoleServer extends EventEmitter {
 
     <!-- 代她说 (人工插话) -->
     <div class="card">
-      <h2>🗣️ 主播代她说 (跳过大模型直发)</h2>
-      <input type="text" id="sayInput" class="input-box" placeholder="输入要代女儿说的话..." />
+      <h2>🗣️ 人工代发言 (快捷插话)</h2>
+      <input type="text" id="sayInput" class="input-box" placeholder="输入要代大肥鱼说的话..." />
       <div style="display: flex; gap: 8px;">
         <button class="btn btn-primary" style="flex: 1;" onclick="hostSay('success')">欢呼说出</button>
         <button class="btn btn-primary" style="flex: 1; background: #64748b;" onclick="hostSay('idle')">平常说出</button>
@@ -407,7 +407,7 @@ export class ConsoleServer extends EventEmitter {
       const logs = document.getElementById('chatLogs')
       const userMsg = document.createElement('div')
       userMsg.className = 'chat-msg user'
-      userMsg.innerHTML = '<div class="chat-meta">👨‍💻 老爸</div>' + escapeHtml(text)
+      userMsg.innerHTML = '<div class="chat-meta">👨‍💻 我</div>' + escapeHtml(text)
       logs.appendChild(userMsg)
       logs.scrollTop = logs.scrollHeight
 

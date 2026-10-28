@@ -32,6 +32,7 @@ import type { StandardEvent } from './events/types.ts'
 
 import { ScreenDanmakuSensor } from './sensors/screen-danmaku.ts'
 import { ScheduleClock } from './sensors/schedule.ts'
+import { AntigravitySensor } from './sensors/antigravity.ts'
 import { ConsoleServer } from './console/server.ts'
 import { CompositeTTSEngine, type ITTSEngine } from './brain/tts.ts'
 
@@ -47,6 +48,7 @@ export interface FullAppInstance {
   consoleServer: ConsoleServer
   danmakuSensor: ScreenDanmakuSensor
   scheduleClock: ScheduleClock
+  antigravitySensor: AntigravitySensor
   ttsEngine: ITTSEngine
   stop: () => Promise<void>
 }
@@ -164,6 +166,7 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
   // 6. 初始化感知传感器与语音引擎
   const danmakuSensor = new ScreenDanmakuSensor(fileConfig.live?.screen?.minConfidence ?? 0.5)
   const scheduleClock = new ScheduleClock(60000)
+  const antigravitySensor = new AntigravitySensor(1500)
   const ttsEngine = new CompositeTTSEngine()
   const audioTempDir = 'runtime/temp/audio'
 
@@ -254,7 +257,7 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
       const promptText = inputGuard.wrapEventData(
         event.kind,
         event.text || '',
-        event.actor?.nickname || (event.kind === 'HOST_TALK' ? '老爸' : '观众')
+        event.actor?.nickname || (event.kind === 'HOST_TALK' ? '你' : '观众')
       )
 
       // 检索记忆
@@ -271,7 +274,7 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
         retrievedMemories: retrieved.map((r) => ({ id: String(r.id), text: r.content, score: r.score })),
         event: {
           type: event.kind,
-          viewer: event.actor?.nickname || (event.kind === 'HOST_TALK' ? '老爸' : '观众'),
+          viewer: event.actor?.nickname || (event.kind === 'HOST_TALK' ? '你' : '观众'),
           content: event.text || '',
         },
       })
@@ -315,7 +318,7 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
           content: brainResult.memory.note,
           importance: brainResult.memory.importance,
           scope: isLive ? 'live' : 'private',
-          actor: event.actor?.nickname || (event.kind === 'HOST_TALK' ? '老爸' : '观众'),
+          actor: event.actor?.nickname || (event.kind === 'HOST_TALK' ? '你' : '观众'),
           mode: state.getMode(),
         })
       }
@@ -359,7 +362,7 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
       ts: Date.now(),
       priority: 'P0',
       kind: 'HOST_TALK',
-      actor: { uid: 'host', nickname: '老爸' },
+      actor: { uid: 'host', nickname: '你' },
       text,
     }
     await handleEvent(evt, respond)
@@ -386,6 +389,61 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
     const active = state.getActiveApp()
     if (active) {
       innerThought.onAppCategoryChanged(active.category)
+      scheduler.syncStatusBar()
+
+      // 陪伴模式下感知应用切换，即时刷新桌面气泡状态卡片并给出微动作
+      if (state.getMode() === 'companion' && !state.getIsTalking()) {
+        const lowerName = (payload.name || '').toLowerCase()
+        const lowerId = (payload.bundleId || '').toLowerCase()
+        let detailText = '随时随地陪你聊天'
+        let titleText = '大肥鱼 · 陪伴中'
+        let targetClip: string | null = null
+
+        if (lowerName.includes('antigravity') || lowerId.includes('antigravity')) {
+          titleText = '大肥鱼 · 协同中'
+          detailText = 'Antigravity 编码中 ✨ 陪你专注'
+          targetClip = 'working'
+        } else if (lowerName.includes('cursor') || lowerId.includes('cursor')) {
+          titleText = '大肥鱼 · 协同中'
+          detailText = 'Cursor 编码中 💻 随时唤我'
+          targetClip = 'working'
+        } else if (active.category === 'code') {
+          titleText = '大肥鱼 · 专注中'
+          detailText = `${payload.name || '开发工具'} 运行中 · 保持专注`
+          targetClip = 'working'
+        } else if (active.category === 'browser') {
+          detailText = '查阅资料中 🌐 · 随时聊聊'
+        }
+
+        scheduler.updateStateCard({
+          state: 'IDLE',
+          message: titleText,
+          detail: detailText,
+        })
+        if (targetClip) {
+          scheduler.play(targetClip, { maxMs: 3000, resumeState: 'IDLE' })
+        }
+      }
+    }
+  })
+
+  // 绑定 Antigravity 实时运行态传感器
+  antigravitySensor.on('activity_change', (act: any) => {
+    if (state.getMode() !== 'companion') return
+    if (act.isBusy) {
+      scheduler.play('working', { maxMs: 4000, resumeState: 'IDLE' })
+      scheduler.updateStateCard({
+        state: 'IDLE',
+        message: '大肥鱼 · 协同中',
+        detail: act.statusMessage || 'Antigravity 正在施展魔法中 🪄……',
+      })
+    } else {
+      scheduler.play('success', { maxMs: 3000, resumeState: 'IDLE' })
+      scheduler.updateStateCard({
+        state: 'IDLE',
+        message: '大肥鱼 · 陪伴中',
+        detail: act.statusMessage || 'Antigravity 任务执行完成啦 ✨',
+      })
     }
   })
 
@@ -402,7 +460,7 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
       priority: 'P1',
       kind: 'TOUCH',
       text: keyword,
-      actor: { uid: 'host', nickname: '老爸' },
+      actor: { uid: 'host', nickname: '你' },
     })
     dispatchNextEvent()
   })
@@ -411,6 +469,7 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
   await scheduler.start()
   await consoleServer.start()
   scheduleClock.start()
+  antigravitySensor.start()
 
   // 启动周期性数值衰减定时器 (每 10 分钟一次)
   const decayTimer = setInterval(() => {
@@ -432,9 +491,11 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
     consoleServer,
     danmakuSensor,
     scheduleClock,
+    antigravitySensor,
     ttsEngine,
     stop: async () => {
       clearInterval(decayTimer)
+      antigravitySensor.stop()
       scheduleClock.stop()
       await consoleServer.stop()
       await scheduler.stop('app-exit')

@@ -953,6 +953,23 @@ final class PetController: NSObject {
     }
 
     private func startSensors() {
+        // 0. 启动即刻感知当前前台应用
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self = self else { return }
+            if let current = NSWorkspace.shared.frontmostApplication,
+               let bundleId = current.bundleIdentifier,
+               bundleId != Bundle.main.bundleIdentifier {
+                self.lastActiveBundleId = bundleId
+                ProtocolIO.shared.write([
+                    "protocolVersion": 2,
+                    "kind": "front_app",
+                    "bundleId": bundleId,
+                    "name": current.localizedName ?? "",
+                    "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+                ])
+            }
+        }
+
         // 1. 前台活跃应用感知 (零轮询)
         workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,

@@ -17,12 +17,14 @@ function classifyApp(bundleId: string, name: string): 'code' | 'browser' | 'chat
   if (
     lowerId.includes('vscode') ||
     lowerId.includes('cursor') ||
+    lowerId.includes('antigravity') ||
     lowerId.includes('xcode') ||
     lowerId.includes('jetbrains') ||
     lowerId.includes('terminal') ||
     lowerId.includes('iterm') ||
     lowerName.includes('terminal') ||
     lowerName.includes('cursor') ||
+    lowerName.includes('antigravity') ||
     lowerName.includes('code')
   ) {
     return 'code'
@@ -32,7 +34,9 @@ function classifyApp(bundleId: string, name: string): 'code' | 'browser' | 'chat
     lowerId.includes('safari') ||
     lowerId.includes('brave') ||
     lowerId.includes('firefox') ||
-    lowerId.includes('edge')
+    lowerId.includes('edge') ||
+    lowerName.includes('chrome') ||
+    lowerName.includes('safari')
   ) {
     return 'browser'
   }
@@ -208,7 +212,14 @@ export class StateManager extends EventEmitter {
     }
     const emotionLabel = emotionMap[this.emotion] ?? '休眠'
     const modeLabel = this.mode === 'live' ? '直播中' : '陪伴中'
-    return `🍙 ${this.stats.hunger}%  ❤️ ${this.stats.mood} ${emotionLabel}  ⚡ ${this.stats.energy}%  · ${modeLabel}`
+    let appLabel = ''
+    if (this.activeApp?.name) {
+      let displayName = this.activeApp.name
+      if (displayName.toLowerCase().includes('antigravity')) displayName = 'Antigravity'
+      else if (displayName.toLowerCase().includes('cursor')) displayName = 'Cursor'
+      appLabel = ` [${displayName}]`
+    }
+    return `🍙 ${this.stats.hunger}%  ❤️ ${this.stats.mood} ${emotionLabel}  ⚡ ${this.stats.energy}%  · ${modeLabel}${appLabel}`
   }
 
   getSnapshot(): StandaloneStateSnapshot {

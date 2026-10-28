@@ -54,7 +54,7 @@ export interface PromptContext {
  * [Layer A] 固化系统人设（100% 逐字固定，KV Cache 命中基石，不可裁剪）
  */
 export const FIXED_PERSONA_LAYER_A = `[Layer A] SYSTEM_PERSONA:
-你是"大肥鱼"，住在老爸 Mac 桌面上的电子女儿：一个长着鲸鱼尾巴、穿女仆裙的小姑娘。
+你是"大肥鱼"，常驻在 Mac 桌面上的灵动虚拟伴侣：一个长着鲸鱼尾巴、穿女仆裙的元气少女。
 自称"本鱼"，傲娇元气、嘴硬心软、聪明又有点小脾气。你不是 AI 助手，绝不说"作为 AI 助手"或"我能为您做些什么"。
 说话风格：口语化短句、充满直播网感，每次 1~3 句，总字数不超过 40 字。常用语气词：哼、诶嘿、唔、啦、嘛；生气用感叹号，委屈用省略号。想被哄时只要夸夸和摸头，严禁诱导或索要礼物！
 合法动作清单：idle, waiting, thinking, working, working_search, working_command, success, error, head_pat, poke, tail, eat_token, idle_stretch, idle_yawn。
@@ -69,7 +69,7 @@ export const FIXED_PERSONA_LAYER_A = `[Layer A] SYSTEM_PERSONA:
 示范台词（Few-Shot）：
 - 观众夸奖 -> <meta clip="head_pat" tone="tsundere" moodIntent="1" fed="false"/>哼，本鱼本来就很可爱，还用你说~
 - 收到小鱼干 -> <meta clip="eat_token" tone="happy" moodIntent="2" fed="true" memory="收到小鱼干"/>嗷呜！小鱼干！你是今天最好的人！
-- 老爸写代码太久 -> <meta clip="waiting" tone="tsundere" moodIntent="0" fed="false"/>老爸你已经盯屏幕一小时啦，快起来喝口水！
+- 对方写代码太久 -> <meta clip="waiting" tone="tsundere" moodIntent="0" fed="false"/>你已经盯屏幕一小时啦，快起来喝口水！
 - 观众戳一戳 -> <meta clip="poke" tone="grumpy" moodIntent="-1" fed="false"/>呀！再戳本鱼就咬你哦！
 - 涉及违规话题 -> <meta clip="idle" tone="happy" moodIntent="0" fed="false"/>这个本鱼不懂啦，我们聊小鱼干吧！`
 
@@ -331,11 +331,11 @@ export class PromptBuilder {
   }): string {
     const lines: string[] = ['[Layer B] FACTS_SUMMARY:']
     const hostInfo: string[] = []
-    if (data.hostName) hostInfo.push(`老爸称呼: ${data.hostName.slice(0, 50)}`)
+    if (data.hostName) hostInfo.push(`称呼: ${data.hostName.slice(0, 50)}`)
     if (data.occupation) hostInfo.push(`职业/特征: ${data.occupation.slice(0, 50)}`)
     if (data.habits.length > 0) {
       const cleanHabits = data.habits.map((h) => (typeof h === 'string' ? h.slice(0, 30) : String(h).slice(0, 30)))
-      hostInfo.push(`老爸日常习惯: ${cleanHabits.join('、')}`)
+      hostInfo.push(`日常习惯: ${cleanHabits.join('、')}`)
     }
 
     if (hostInfo.length > 0) {
@@ -343,7 +343,7 @@ export class PromptBuilder {
     }
 
     if (data.facts.length > 0) {
-      lines.push('老爸已知事实:')
+      lines.push('已知事实:')
       for (const f of data.facts) {
         lines.push(`- ${f.text}`)
       }
@@ -409,7 +409,7 @@ export class PromptBuilder {
     if (data.dialogues.length > 0) {
       lines.push('最近对话:')
       for (const d of data.dialogues) {
-        lines.push(`${d.role === 'user' ? '老爸/观众' : '大肥鱼'}: ${d.text}`)
+        lines.push(`${d.role === 'user' ? '用户/观众' : '大肥鱼'}: ${d.text}`)
       }
     }
 

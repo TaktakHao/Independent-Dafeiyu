@@ -92,7 +92,7 @@ export class InnerThoughtLoop {
         return {
           shouldSpeak: true,
           reason: 'FOCUS_REMIND',
-          candidateTopic: '老爸已经连续死磕代码一个小时啦！必须起来活动喝口水！',
+          candidateTopic: '已经连续死磕代码一个小时啦！必须起来活动喝口水！',
         }
       }
     }
@@ -103,7 +103,7 @@ export class InnerThoughtLoop {
       return {
         shouldSpeak: true,
         reason: 'IDLE_TIMEOUT',
-        candidateTopic: mode === 'live' ? '和直播间观众唠嗑互动' : '随性自言自语或关心老爸',
+        candidateTopic: mode === 'live' ? '和直播间观众唠嗑互动' : '随性自言自语或主动关心',
       }
     }
 
