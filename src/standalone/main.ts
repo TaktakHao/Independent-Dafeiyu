@@ -205,7 +205,10 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
   }
 
   // 单个事件业务处理逻辑
-  const handleEvent = async (event: StandardEvent) => {
+  const handleEvent = async (
+    event: StandardEvent,
+    onReply?: (res: { text: string; clip: string; tone: string }) => void
+  ) => {
     const isLive = state.getMode() === 'live'
 
     // A. 外部输入安全校验与注入拦截
@@ -213,6 +216,7 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
       const inspectRes = inputGuard.inspect(event.text)
       if (!inspectRes.passed) {
         console.warn(`[dsh-dafeiyu] 拦截不安全输入 (${inspectRes.reason}): ${event.text}`)
+        onReply?.({ text: '唔…这句话好像不太合适呢~', clip: 'idle', tone: 'tsundere' })
         return
       }
       event.text = inspectRes.sanitizedText
@@ -232,6 +236,8 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
         await speakWithVoice(text, clip, tone)
       }
 
+      onReply?.({ text, clip, tone })
+
       if (resolution.moodDelta) {
         emotion.applyMoodIntent(resolution.moodDelta, event.actor?.uid, isLive)
         state.updateStats(emotion.getState(isLive).stats)
@@ -248,7 +254,7 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
       const promptText = inputGuard.wrapEventData(
         event.kind,
         event.text || '',
-        event.actor?.nickname || '观众'
+        event.actor?.nickname || (event.kind === 'HOST_TALK' ? '老爸' : '观众')
       )
 
       // 检索记忆
@@ -265,13 +271,13 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
         retrievedMemories: retrieved.map((r) => ({ id: String(r.id), text: r.content, score: r.score })),
         event: {
           type: event.kind,
-          viewer: event.actor?.nickname || '观众',
+          viewer: event.actor?.nickname || (event.kind === 'HOST_TALK' ? '老爸' : '观众'),
           content: event.text || '',
         },
       })
 
       const brainResult = await brain.route({
-        eventType: event.kind === 'GIFT' ? 'GIFT_THANKS_LARGE' : 'DANMAKU',
+        eventType: event.kind === 'GIFT' ? 'GIFT_THANKS_LARGE' : (event.kind === 'HOST_TALK' ? 'HOST_TALK' : 'DANMAKU'),
         prompt: layeredPrompt,
         maxTokens: 120,
       })
@@ -292,6 +298,8 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
         await speakWithVoice(sanitized.text, sanitized.clip, sanitized.tone)
       }
 
+      onReply?.({ text: sanitized.text, clip: sanitized.clip, tone: sanitized.tone })
+
       // 更新好感度与记忆
       if (event.actor?.uid && event.actor?.nickname) {
         memory.upsertViewer({
@@ -307,7 +315,7 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
           content: brainResult.memory.note,
           importance: brainResult.memory.importance,
           scope: isLive ? 'live' : 'private',
-          actor: event.actor?.nickname || '观众',
+          actor: event.actor?.nickname || (event.kind === 'HOST_TALK' ? '老爸' : '观众'),
           mode: state.getMode(),
         })
       }
@@ -342,6 +350,19 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
   consoleServer.on('host_say', async ({ text, clip }: { text: string; clip: string }) => {
     innerThought.recordSpoken(text)
     await speakWithVoice(text, clip || 'happy', 'happy')
+  })
+
+  // 绑定爸爸专属聊天通道 (日常陪伴对话)
+  consoleServer.on('chat_message', async ({ text, respond }: { text: string; respond: (res: any) => void }) => {
+    const evt: StandardEvent = {
+      id: `chat-${Date.now()}`,
+      ts: Date.now(),
+      priority: 'P0',
+      kind: 'HOST_TALK',
+      actor: { uid: 'host', nickname: '老爸' },
+      text,
+    }
+    await handleEvent(evt, respond)
   })
 
   consoleServer.on('danmaku_injected', (body: any) => {

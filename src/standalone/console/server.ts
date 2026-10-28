@@ -134,6 +134,39 @@ export class ConsoleServer extends EventEmitter {
       return
     }
 
+    // 8. 爸爸专属聊天 API (与女儿直接对话，触发大脑思考并保留私密记忆)
+    if (req.method === 'POST' && url.pathname === '/api/chat') {
+      const body = await this.readJsonBody(req)
+      const message = String(body.message || '').trim()
+      if (!message) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Message cannot be empty' }))
+        return
+      }
+
+      let responded = false
+      const timeout = setTimeout(() => {
+        if (!responded) {
+          responded = true
+          res.writeHead(504, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'Daughter thinking timeout' }))
+        }
+      }, 15000)
+
+      this.emit('chat_message', {
+        text: message,
+        respond: (reply: { text: string; clip: string; tone: string }) => {
+          if (!responded) {
+            responded = true
+            clearTimeout(timeout)
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ success: true, reply }))
+          }
+        },
+      })
+      return
+    }
+
     res.writeHead(404, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ error: 'Endpoint not found' }))
   }
@@ -231,15 +264,65 @@ export class ConsoleServer extends EventEmitter {
     .stats-bar { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px; }
     .progress { height: 8px; border-radius: 4px; background: #242938; overflow: hidden; margin-bottom: 12px; }
     .progress-fill { height: 100%; transition: width 0.3s; }
+    .chat-container {
+      height: 220px;
+      overflow-y: auto;
+      background: #090a0f;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .chat-msg {
+      max-width: 85%;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    .chat-msg.user {
+      align-self: flex-end;
+      background: #1e3a8a;
+      color: #bfdbfe;
+    }
+    .chat-msg.daughter {
+      align-self: flex-start;
+      background: #242938;
+      color: #e2e8f0;
+      border: 1px solid #334155;
+    }
+    .chat-meta {
+      font-size: 10px;
+      color: #94a3b8;
+      margin-bottom: 2px;
+    }
   </style>
 </head>
 <body>
   <div class="header">
-    <h1>🐋 大肥鱼主播安全控制台</h1>
+    <h1>🐋 大肥鱼主播与日常陪伴控制台</h1>
     <span class="badge" id="modeBadge">陪伴模式</span>
   </div>
 
   <div class="grid">
+    <!-- 爸爸与女儿打字聊天 (陪伴模式专用) -->
+    <div class="card" style="grid-column: 1 / -1;">
+      <h2>💬 爸爸与女儿聊天 (日常陪伴模式 · 驱动桌宠动作与真实发声)</h2>
+      <div class="chat-container" id="chatLogs">
+        <div class="chat-msg daughter">
+          <div class="chat-meta">🐋 大肥鱼</div>
+          老爸你来啦！今天在 Antigravity 和 Cursor 里写什么好玩的代码呢？快跟我讲讲~
+        </div>
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <input type="text" id="chatInput" class="input-box" style="margin-bottom: 0;" placeholder="跟女儿说点什么... (按 Enter 发送)" onkeydown="if(event.key==='Enter') sendChat()" />
+        <button class="btn btn-primary" style="white-space: nowrap;" id="sendBtn" onclick="sendChat()">发送</button>
+      </div>
+    </div>
+
     <!-- 急停与风控 -->
     <div class="card">
       <h2>🚨 紧急安全风控</h2>
@@ -313,6 +396,48 @@ export class ConsoleServer extends EventEmitter {
       await fetch('/api/say', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, clip }) })
       document.getElementById('sayInput').value = ''
       refreshStatus()
+    }
+
+    async function sendChat() {
+      const input = document.getElementById('chatInput')
+      const text = input.value.trim()
+      if (!text) return
+      input.value = ''
+
+      const logs = document.getElementById('chatLogs')
+      const userMsg = document.createElement('div')
+      userMsg.className = 'chat-msg user'
+      userMsg.innerHTML = '<div class="chat-meta">👨‍💻 老爸</div>' + escapeHtml(text)
+      logs.appendChild(userMsg)
+      logs.scrollTop = logs.scrollHeight
+
+      const daughterMsg = document.createElement('div')
+      daughterMsg.className = 'chat-msg daughter'
+      daughterMsg.innerHTML = '<div class="chat-meta">🐋 大肥鱼</div><i>思考中...</i>'
+      logs.appendChild(daughterMsg)
+      logs.scrollTop = logs.scrollHeight
+
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text })
+        })
+        const data = await res.json()
+        if (data.reply) {
+          daughterMsg.innerHTML = '<div class="chat-meta">🐋 大肥鱼 (' + (data.reply.clip || '开心') + ')</div>' + escapeHtml(data.reply.text)
+        } else {
+          daughterMsg.innerHTML = '<div class="chat-meta">🐋 大肥鱼</div>(哼，本鱼暂时不想理你或者走神啦)'
+        }
+      } catch (err) {
+        daughterMsg.innerHTML = '<div class="chat-meta">🐋 大肥鱼</div>(脑瓜短路了，请检查网络或模型配置)'
+      }
+      logs.scrollTop = logs.scrollHeight
+      refreshStatus()
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     }
 
     setInterval(refreshStatus, 2000)
