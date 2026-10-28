@@ -15,6 +15,7 @@
         "args": [
           "-p", "{{PROMPT}}",
           "--output-format", "json",
+          "--model", "gemini-3.8-flash-low",
           "--effort", "low",
           "--sandbox",
           "--disable-slash-commands",
@@ -54,6 +55,7 @@
     },
     "hedgeAfterMs": 2500,
     "deepseek": {
+      "apiKey": "",
       "baseUrl": "https://api.deepseek.com",
       "model": "deepseek-chat",
       "timeoutMs": 8000,

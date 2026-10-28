@@ -220,6 +220,11 @@ export class AgentCliProvider implements BrainProvider {
   }
 
   getStatus(): ProviderStatusInfo {
+    let binPath = ''
+    try {
+      binPath = childProcess.execSync(`which ${this.config.command}`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }).trim()
+    } catch {}
+
     return {
       id: this.id,
       tier: this.tier,
@@ -235,7 +240,9 @@ export class AgentCliProvider implements BrainProvider {
       exhaustedUntil: this.exhaustedUntil || undefined,
       circuitBrokenUntil: this.circuitBrokenUntil || undefined,
       lastError: this.lastError,
-    }
+      installed: Boolean(binPath),
+      binPath,
+    } as any
   }
 
   /**

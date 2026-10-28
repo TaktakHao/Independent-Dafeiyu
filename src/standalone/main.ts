@@ -141,17 +141,26 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
     model: fileConfig.brain?.local?.chatModel ?? 'qwen2.5:14b',
   })
   const deepseek = new DeepSeekProvider({
-    apiKey: process.env.DEEPSEEK_API_KEY || 'sk-dummy-key',
+    apiKey: process.env.DEEPSEEK_API_KEY || fileConfig.brain?.deepseek?.apiKey || '',
     baseUrl: fileConfig.brain?.deepseek?.baseUrl ?? 'https://api.deepseek.com',
     model: fileConfig.brain?.deepseek?.model ?? 'deepseek-chat',
     dailyBudgetLimit: fileConfig.brain?.deepseek?.dailyBudgetCny ?? 5,
   })
-  const cliProvider = new AgentCliProvider({
+  const cliAgy = new AgentCliProvider({
+    id: 'agy',
+    name: 'Antigravity CLI (agy)',
     command: fileConfig.brain?.cliPool?.[0]?.command ?? 'agy',
+    args: fileConfig.brain?.cliPool?.[0]?.args,
+  })
+  const cliCursor = new AgentCliProvider({
+    id: 'cursor',
+    name: 'Cursor Agent (cursor-agent)',
+    command: fileConfig.brain?.cliPool?.[1]?.command ?? 'cursor-agent',
+    args: fileConfig.brain?.cliPool?.[1]?.args,
   })
 
   const brain = new TieredBrainRouter({
-    providers: [cliProvider, deepseek, localLlm, ruleFallback],
+    providers: [cliAgy, cliCursor, deepseek, localLlm, ruleFallback],
     scheduler,
     latencyBudgets: fileConfig.brain?.latencyBudgetMs,
     hedgeAfterMs: fileConfig.brain?.hedgeAfterMs ?? 2500,
@@ -185,7 +194,7 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
 
   // 7. 初始化主播安全控制台
   const consolePort = config.webPort ?? fileConfig.console?.port ?? 7788
-  const consoleServer = new ConsoleServer(consolePort, state, scheduler)
+  const consoleServer = new ConsoleServer(consolePort, state, scheduler, brain)
 
   // --- 事件消费调度主循环 ---
   let isProcessing = false

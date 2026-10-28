@@ -37,7 +37,29 @@ else
   echo "🎙️ 语音引擎: macOS 原生 say 语音引擎 (建议: pip3 install edge-tts 以获得超拟人女声)"
 fi
 
-# 4. 解析运行模式参数
+# 4. 检查思考大脑与本地 CLI 状态
+echo "🧠 阶梯思考大脑就绪诊断:"
+if command -v agy >/dev/null 2>&1; then
+  echo "   ├─ Tier 1 (首选): Antigravity CLI [agy] -> $(command -v agy) ✅"
+else
+  echo "   ├─ Tier 1 (首选): Antigravity CLI [agy] -> 未安装 ⚪"
+fi
+
+if command -v cursor-agent >/dev/null 2>&1; then
+  echo "   ├─ Tier 1 (备选): Cursor Agent [cursor-agent] -> $(command -v cursor-agent) ✅"
+else
+  echo "   ├─ Tier 1 (备选): Cursor Agent [cursor-agent] -> 未安装 ⚪"
+fi
+
+CONFIG_KEY=$(grep -o '"apiKey": *"[^"]*"' config/daughter.config.json 2>/dev/null | cut -d'"' -f4 || true)
+if [ -n "$DEEPSEEK_API_KEY" ] || [ -n "$CONFIG_KEY" ]; then
+  echo "   ├─ Tier 2 (云端): DeepSeek Chat API -> 密钥已配置 ✅"
+else
+  echo "   ├─ Tier 2 (云端): DeepSeek Chat API -> 未配置密钥 (可至控制台 http://127.0.0.1:7788 填写) ⚪"
+fi
+echo "   └─ Tier 4 (保底): 本地离线规则语料库 -> 0ms 零延迟就绪 ✅"
+
+# 5. 解析运行模式参数
 MODE="companion"
 HEADLESS=""
 

@@ -378,4 +378,22 @@ export class TieredBrainRouter extends EventEmitter {
     }
     return result
   }
+
+  getAllStatus(): {
+    activeTier: number
+    providers: any[]
+  } {
+    const list = this.providers.map((p) => {
+      const status = typeof p.getStatus === 'function' ? p.getStatus() : { id: p.id, tier: p.tier, name: p.name }
+      return {
+        ...status,
+        available: p.isAvailable(),
+      }
+    })
+    const currentActive = this.providers.find((p) => p.isAvailable())
+    return {
+      activeTier: currentActive ? currentActive.tier : 4,
+      providers: list,
+    }
+  }
 }

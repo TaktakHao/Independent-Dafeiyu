@@ -220,9 +220,21 @@ export class DeepSeekProvider implements BrainProvider {
     )
   }
 
+  setApiKey(key: string): void {
+    this.apiKey = key.trim()
+  }
+
+  getMaskedApiKey(): string {
+    const key = this.apiKey || process.env.DEEPSEEK_API_KEY || ''
+    if (!key || key === 'sk-dummy-key') return ''
+    if (key.length <= 8) return 'sk-******'
+    return `${key.slice(0, 5)}...${key.slice(-4)}`
+  }
+
   isAvailable(): boolean {
     if (!this.enabled || !this.isManuallyAvailable) return false
-    if (!this.apiKey && !process.env.DEEPSEEK_API_KEY) return false
+    const key = this.apiKey || process.env.DEEPSEEK_API_KEY || ''
+    if (!key || key === 'sk-dummy-key') return false
     if (this.budgetGuard.isBudgetExceeded()) return false
     return true
   }
@@ -251,7 +263,7 @@ export class DeepSeekProvider implements BrainProvider {
       id: this.id,
       tier: this.tier,
       name: this.name,
-      state: isExceeded ? 'EXHAUSTED' : 'READY',
+      state: !this.isAvailable() && !this.apiKey ? 'DISABLED' : (isExceeded ? 'EXHAUSTED' : 'READY'),
       totalInvocations: this.totalInvocations,
       successCount: this.successCount,
       failureCount: this.failureCount,
@@ -260,7 +272,10 @@ export class DeepSeekProvider implements BrainProvider {
       p50LatencyMs: this.getEstimatedLatencyMs(),
       p90LatencyMs: Math.round(this.estimatedLatencyMs * 1.4),
       lastError: isExceeded ? `DeepSeek daily budget exceeded: ¥${cost.toFixed(2)} >= ¥${budget}` : undefined,
-    }
+      maskedApiKey: this.getMaskedApiKey(),
+      todayCostCny: Number(cost.toFixed(4)),
+      dailyBudgetCny: budget,
+    } as any
   }
 
   /**

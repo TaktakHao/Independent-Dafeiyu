@@ -5,6 +5,8 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { EventEmitter } from 'node:events'
+import * as fs from 'node:fs'
+import * as path from 'node:path'
 import type { StateManager } from '../core/state.ts'
 import type { RuntimeScheduler } from '../core/scheduler.ts'
 
@@ -13,16 +15,19 @@ export class ConsoleServer extends EventEmitter {
   private port: number
   private state: StateManager
   private scheduler: RuntimeScheduler
+  private brain?: any
 
   constructor(
     port: number = 7788,
     state: StateManager,
-    scheduler: RuntimeScheduler
+    scheduler: RuntimeScheduler,
+    brain?: any
   ) {
     super()
     this.port = port
     this.state = state
     this.scheduler = scheduler
+    this.brain = brain
   }
 
   start(): Promise<void> {
@@ -167,6 +172,46 @@ export class ConsoleServer extends EventEmitter {
       return
     }
 
+    // 9. 大脑与 CLI 诊断状态查询 API
+    if (req.method === 'GET' && url.pathname === '/api/brain/status') {
+      const status = typeof this.brain?.getAllStatus === 'function' ? this.brain.getAllStatus() : { providers: [] }
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(status))
+      return
+    }
+
+    // 10. DeepSeek API Key 在线热配置 API
+    if (req.method === 'POST' && url.pathname === '/api/config/deepseek') {
+      const body = await this.readJsonBody(req)
+      const apiKey = String(body.apiKey || '').trim()
+
+      if (this.brain?.deepSeekProvider) {
+        this.brain.deepSeekProvider.setApiKey(apiKey)
+      }
+      const p = this.brain?.providers?.find?.((x: any) => x.tier === 2)
+      if (p && typeof p.setApiKey === 'function') {
+        p.setApiKey(apiKey)
+      }
+
+      // 持久化到 config/daughter.config.json
+      try {
+        const cfgPath = path.resolve(process.cwd(), 'config/daughter.config.json')
+        if (fs.existsSync(cfgPath)) {
+          const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
+          if (!cfg.brain) cfg.brain = {}
+          if (!cfg.brain.deepseek) cfg.brain.deepseek = {}
+          cfg.brain.deepseek.apiKey = apiKey
+          fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), 'utf-8')
+        }
+      } catch (err) {
+        console.warn('[dsh-dafeiyu] 持久化 DeepSeek Key 失败:', err)
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ success: true, message: 'DeepSeek API Key 已更新' }))
+      return
+    }
+
     res.writeHead(404, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ error: 'Endpoint not found' }))
   }
@@ -299,6 +344,30 @@ export class ConsoleServer extends EventEmitter {
       color: #94a3b8;
       margin-bottom: 2px;
     }
+    .provider-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .provider-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      border-radius: 6px;
+      background: #090a0f;
+      border: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .tag {
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: bold;
+    }
+    .tag-ready { background: #065f46; color: #a7f3d0; }
+    .tag-busy { background: #854d0e; color: #fde047; }
+    .tag-disabled { background: #374151; color: #9ca3af; }
   </style>
 </head>
 <body>
@@ -355,6 +424,29 @@ export class ConsoleServer extends EventEmitter {
       <div style="display: flex; gap: 8px;">
         <button class="btn btn-primary" style="flex: 1;" onclick="hostSay('success')">欢呼说出</button>
         <button class="btn btn-primary" style="flex: 1; background: #64748b;" onclick="hostSay('idle')">平常说出</button>
+      </div>
+    </div>
+
+    <!-- 思考大脑与 CLI 实时诊断 -->
+    <div class="card" style="grid-column: 1 / -1;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <h2>🧠 阶梯思考大脑与 CLI 实时状态</h2>
+        <span class="badge" id="activeTierBadge">当前生效: Tier 1</span>
+      </div>
+      <div class="provider-list" id="providerList">
+        <div style="font-size: 13px; color: #94a3b8;">正在探测本地 CLI 与 API 连通性...</div>
+      </div>
+    </div>
+
+    <!-- DeepSeek API Key 在线配置 -->
+    <div class="card" style="grid-column: 1 / -1;">
+      <h2>⚙️ DeepSeek API 密钥在线配置 (热生效)</h2>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <input type="password" id="deepseekKeyInput" class="input-box" style="margin-bottom: 0;" placeholder="sk-********************************" />
+        <button class="btn btn-primary" style="white-space: nowrap;" onclick="saveDeepSeekKey()">保存并立即生效</button>
+      </div>
+      <div style="font-size: 11px; color: #94a3b8; margin-top: 6px;" id="keyHintText">
+        当前状态: 正在读取密钥...
       </div>
     </div>
   </div>
@@ -436,12 +528,75 @@ export class ConsoleServer extends EventEmitter {
       refreshStatus()
     }
 
+    async function refreshBrainStatus() {
+      try {
+        const res = await fetch('/api/brain/status')
+        const data = await res.json()
+        const list = document.getElementById('providerList')
+        const badge = document.getElementById('activeTierBadge')
+        if (badge) {
+          badge.innerText = '当前首选生效: Tier ' + data.activeTier
+        }
+        if (list && Array.isArray(data.providers)) {
+          let html = ''
+          for (const p of data.providers) {
+            const isReady = p.available && p.state === 'READY'
+            const tagClass = isReady ? 'tag-ready' : (p.state === 'EXHAUSTED' || p.state === 'CIRCUIT_BROKEN' ? 'tag-busy' : 'tag-disabled')
+            const tagLabel = isReady ? '就绪' : (p.state === 'EXHAUSTED' ? '额度超限冷却' : (p.state === 'DISABLED' ? '未配置' : p.state || '离线'))
+            
+            let extra = ''
+            if (p.binPath) extra = ' · ' + p.binPath
+            else if (p.maskedApiKey) extra = ' · 密钥已就绪 (' + p.maskedApiKey + ')'
+            else if (p.todayCostCny !== undefined) extra = ' · 今日消耗: ¥' + p.todayCostCny
+            
+            html += '<div class="provider-row">'
+            html += '<div><strong>Tier ' + p.tier + ': ' + escapeHtml(p.name || p.id) + '</strong>'
+            html += '<span style="font-size: 11px; color: #64748b; margin-left: 8px;">' + escapeHtml(extra) + '</span></div>'
+            html += '<span class="tag ' + tagClass + '">' + tagLabel + '</span>'
+            html += '</div>'
+
+            if (p.tier === 2 && p.maskedApiKey) {
+              const hint = document.getElementById('keyHintText')
+              if (hint) {
+                hint.innerText = '当前配置密钥: ' + p.maskedApiKey + ' (今日已用: ¥' + (p.todayCostCny || 0) + ' / 限额 ¥' + (p.dailyBudgetCny || 5) + ')'
+              }
+            }
+          }
+          list.innerHTML = html
+        }
+      } catch (e) {}
+    }
+
+    async function saveDeepSeekKey() {
+      const input = document.getElementById('deepseekKeyInput')
+      const key = input.value.trim()
+      if (!key) {
+        alert('请输入有效的 DeepSeek API Key (以 sk- 开头)')
+        return
+      }
+      try {
+        const res = await fetch('/api/config/deepseek', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ apiKey: key })
+        })
+        const data = await res.json()
+        alert(data.message || '配置已生效')
+        input.value = ''
+        refreshBrainStatus()
+      } catch (e) {
+        alert('保存失败: ' + e.message)
+      }
+    }
+
     function escapeHtml(str) {
       return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     }
 
     setInterval(refreshStatus, 2000)
+    setInterval(refreshBrainStatus, 3000)
     refreshStatus()
+    refreshBrainStatus()
   </script>
 </body>
 </html>`

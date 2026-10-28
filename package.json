@@ -63,6 +63,7 @@
   "scripts": {
     "start": "node --experimental-strip-types src/standalone/main.ts",
     "start:live": "node --experimental-strip-types src/standalone/main.ts --mode live",
+    "check:brain": "node scripts/check-brain.mjs",
     "test": "node --test --test-timeout=10000 test/*.test.js",
     "test:all": "node --test test/*.test.js test-e2e/**/*.test.js",
     "test:helper": "node --test test/helper-lifecycle.test.js",
