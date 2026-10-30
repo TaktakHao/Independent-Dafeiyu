@@ -101,6 +101,62 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_state_key ON state(key);
       `)
     }
+  },
+  {
+    version: 2,
+    name: 'm4_contacts_and_approvals',
+    up: (db: DatabaseSync) => {
+      // 1. 多联系人画像表 (千人千面独立档案)
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS contact_profiles (
+          uid TEXT PRIMARY KEY,                       -- 主键，格式为 'qq:<userId>'
+          external_id TEXT NOT NULL,                   -- 纯数字 QQ 号
+          nickname TEXT NOT NULL,                      -- QQ 昵称 (最新抓取)
+          group_card TEXT DEFAULT '',                  -- 群名片 (若在群内)
+          preferred_title TEXT NOT NULL,               -- 大肥鱼对 TA 的专属称呼 (自报姓名/昵称)
+          role TEXT NOT NULL DEFAULT 'member',         -- 角色: 'owner' | 'trusted' | 'member' | 'blocked'
+          affinity INTEGER NOT NULL DEFAULT 10,        -- 好感度: [0, 100]，初始 10
+          bond_level TEXT NOT NULL DEFAULT '初识群友',  -- 羁绊阶段: '初识群友' | '脸熟鱼友' | '默契损友' | '铁杆挚友'
+          impression_tags TEXT NOT NULL DEFAULT '[]',  -- 性格/互动印象标签 JSON 数组
+          chat_count INTEGER NOT NULL DEFAULT 1,       -- 累计对话轮数
+          last_group_id TEXT DEFAULT NULL,             -- 最近一次互动的群号
+          last_seen INTEGER NOT NULL,                  -- 最近互动毫秒时间戳
+          created_at INTEGER NOT NULL                  -- 首次建档时间戳
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_external_id ON contact_profiles(external_id);
+        CREATE INDEX IF NOT EXISTS idx_contacts_role ON contact_profiles(role);
+        CREATE INDEX IF NOT EXISTS idx_contacts_last_seen ON contact_profiles(last_seen DESC);
+        CREATE INDEX IF NOT EXISTS idx_contacts_affinity ON contact_profiles(affinity DESC);
+      `)
+
+      // 2. 危险动作审批审计表 (L1 风险动作审批与回溯)
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS approval_requests (
+          id TEXT PRIMARY KEY,                         -- 唯一编号 (UUID 或 req_<uuid>)
+          code TEXT NOT NULL,                          -- 短单号，如 "#A101"
+          sender_id TEXT NOT NULL,                     -- 发起人标识，如 'qq:<userId>'
+          sender_name TEXT NOT NULL,                   -- 发起人昵称/群名片
+          channel TEXT NOT NULL DEFAULT 'group',       -- 通道: 'group' | 'private'
+          group_id TEXT DEFAULT NULL,                  -- 来源群号 (若是群聊)
+          intent TEXT NOT NULL,                        -- 意图标识，如 'macos:system_status' 或 'open_app'
+          intent_label TEXT NOT NULL,                  -- 人类可读动作摘要，如 '查看电脑状态'
+          params TEXT NOT NULL DEFAULT '{}',           -- 动作参数 JSON 字符串
+          raw_text TEXT NOT NULL DEFAULT '',           -- 用户原始输入语句
+          status TEXT NOT NULL DEFAULT 'pending',      -- 状态: 'pending' | 'approved' | 'rejected' | 'expired'
+          created_at INTEGER NOT NULL,                 -- 创建时间戳 (ms)
+          expires_at INTEGER NOT NULL,                 -- 过期时间戳 (ms, 默认 created_at + 300,000 即 5 分钟)
+          resolved_at INTEGER DEFAULT NULL,            -- 审批时间戳 (ms)
+          resolved_by TEXT DEFAULT NULL,               -- 审批主体: 'owner:<qq>' | 'console'
+          result_summary TEXT DEFAULT NULL             -- 执行结果摘要或驳回原因
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_approval_code ON approval_requests(code);
+        CREATE INDEX IF NOT EXISTS idx_approval_status_expires ON approval_requests(status, expires_at);
+        CREATE INDEX IF NOT EXISTS idx_approval_sender_created ON approval_requests(sender_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_approval_created_at ON approval_requests(created_at DESC);
+      `)
+    }
   }
 ]
 

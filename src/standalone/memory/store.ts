@@ -24,7 +24,7 @@ import type {
   MemoryScope
 } from './types.ts'
 import { ViewerManager } from './viewers.ts'
-import { retrieveEpisodes, formatEpisodeRecord, cleanOldEpisodes } from './retrieval.ts'
+import { retrieveEpisodes, formatEpisodeRecord, cleanOldEpisodes, calculateRecencyScore, lexicalSimilarity } from './retrieval.ts'
 
 export class MemoryStore {
   private db: DatabaseSync
@@ -71,6 +71,18 @@ export class MemoryStore {
 
     const result = stmt.run(createdAt, mode, scope, actor, text, tone, importance, embeddingStr, createdAt, 0)
     return Number(result.lastInsertRowid)
+  }
+
+  /**
+   * 兼容别名：支持传入 text 或 content 插入情景记忆
+   */
+  addEpisode(options: Partial<InsertEpisodeOptions> & { content?: string }): number {
+    const text = (options.text || options.content || '').trim()
+    if (!text) return 0
+    return this.insertEpisode({
+      ...options,
+      text,
+    })
   }
 
   /**
@@ -142,6 +154,41 @@ export class MemoryStore {
    */
   searchMemories(options: QueryMemoriesOptions): ScoredMemory[] {
     return retrieveEpisodes(this.db, options)
+  }
+
+  /**
+   * 自然语言句子级语义与词汇重叠度智能召回（支持整句对话召回相关历史记忆，同时严格遵守直播 SQL 隔离）
+   */
+  recallRelevantMemories(options: {
+    queryText: string
+    mode: MemoryMode
+    limit?: number
+  }): ScoredMemory[] {
+    const mode = options.mode || 'companion'
+    const limit = Math.max(1, options.limit ?? 3)
+    const rawQuery = (options.queryText || '').replace(/<[^>]+>/g, '').trim()
+
+    // 拉取最近 50 条合规候选记录（物理 SQL 隔离）
+    const episodes = this.queryEpisodes({ mode, limit: 50 })
+    if (episodes.length === 0) return []
+
+    const now = Date.now()
+    const scored: ScoredMemory[] = episodes.map((ep) => {
+      const recencyScore = calculateRecencyScore(ep.created_at, now)
+      const importanceScore = Math.max(1, Math.min(10, ep.importance)) / 10
+      const similarityScore = rawQuery ? lexicalSimilarity(rawQuery, ep.text) : 0.5
+      const finalScore = 0.4 * similarityScore + 0.3 * importanceScore + 0.3 * recencyScore
+      return {
+        ...ep,
+        finalScore: Number(finalScore.toFixed(4)),
+        similarityScore: Number(similarityScore.toFixed(4)),
+        recencyScore: Number(recencyScore.toFixed(4)),
+        importanceScore: Number(importanceScore.toFixed(4)),
+      }
+    })
+
+    scored.sort((a, b) => b.finalScore - a.finalScore)
+    return scored.slice(0, limit)
   }
 
   /**

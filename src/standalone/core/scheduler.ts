@@ -4,6 +4,7 @@ import {
   CompanionMessageKind,
   createMessage,
 } from '../../protocol.js'
+import { CompositeMotionEngine } from '../presentation/motion-engine.ts'
 import type { StateManager } from './state.ts'
 import type {
   AudioEventPayload,
@@ -26,11 +27,13 @@ export class RuntimeScheduler extends EventEmitter {
   private audioQueue: AudioOptions[] = []
   private isShuttingDown: boolean = false
   private statusBarSyncTimer: any = null
+  public readonly motionEngine: CompositeMotionEngine
 
   constructor(state: StateManager, config: StandaloneConfig = {}) {
     super()
     this.state = state
     this.config = config
+    this.motionEngine = new CompositeMotionEngine()
   }
 
   async start(): Promise<void> {
@@ -100,6 +103,13 @@ export class RuntimeScheduler extends EventEmitter {
 
   play(clip: string, options: Partial<PlayOptions> = {}): void {
     if (!this.helper) return
+
+    // 若触发的是高阶复合动作宏（如 dance, sleep, cheer 等），委托给复合动作引擎分步驱动
+    if (this.motionEngine.hasMacro(clip)) {
+      this.motionEngine.playMacro(clip, this)
+      return
+    }
+
     const msg = createMessage(CompanionMessageKind.PLAY, {
       clip,
       maxMs: options.maxMs,
@@ -165,13 +175,17 @@ export class RuntimeScheduler extends EventEmitter {
     this.helper.send(msg)
   }
 
-  updateStateCard(options: { state?: string; message?: string; detail?: string }): void {
+  updateStateCard(options: { state?: string; activity?: string; message?: string; detail?: string }): void {
     if (!this.helper) return
-    const msg = createMessage(CompanionMessageKind.STATE, {
+    const payload: Record<string, any> = {
       state: options.state ?? 'IDLE',
       message: options.message ?? '大肥鱼陪伴中',
       detail: options.detail ?? '随时随地陪你聊天',
-    })
+    }
+    if (options.activity) {
+      payload.activity = options.activity
+    }
+    const msg = createMessage(CompanionMessageKind.STATE, payload)
     this.helper.send(msg)
   }
 
@@ -195,6 +209,7 @@ export class RuntimeScheduler extends EventEmitter {
    * 全局急停机制 (Emergency Stop)
    */
   emergencyStop(): void {
+    this.motionEngine.cancel()
     this.stopAudio()
     this.play('idle', { maxMs: 0, resumeState: 'IDLE' })
     this.setTalking(false)

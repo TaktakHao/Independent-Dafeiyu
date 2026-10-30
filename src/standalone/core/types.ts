@@ -2,7 +2,7 @@
  * 大肥鱼独立伴侣核心 — TypeScript 类型与接口契约
  */
 
-export type OperationalMode = 'companion' | 'live'
+export type OperationalMode = 'companion' | 'work' | 'live'
 
 export type ConnectionStatus =
   | 'unstarted'
@@ -30,7 +30,7 @@ export interface RPGStats {
 export interface ActiveAppInfo {
   bundleId: string
   name: string
-  category: 'code' | 'browser' | 'chat' | 'other'
+  category: 'code' | 'browser' | 'chat' | 'media' | 'other'
   lastActiveAt: number
 }
 

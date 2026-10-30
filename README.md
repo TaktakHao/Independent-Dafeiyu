@@ -41,15 +41,56 @@ npm start
 npm run start:live
 ```
 
-### 4. 主播安全控制台
+### 4. 主播安全控制台（深海赛博玻璃舱 `Deep-Sea Cyber-Glass Studio`）
 服务启动后，浏览器访问：
 👉 **`http://127.0.0.1:7788`**
-提供：
-- 🚨 **一键紧急拉闸急停**：清空事件队列、中断正在播放的语音并切回默认待机动作
-- 💬 **人工代她说**：主播输入指定台词与动作，即时打字机展示并语音播放
-- 🍙 **在线投喂**：增加饱食度与心情值
-- 📊 **实时生理指标**：心情、饱食、精力、当前思考引擎与活跃记忆条目监控
-- 🧪 **测试弹幕与礼物注入**：联调测试全链路流式反应与 0-Token 模板应答
+
+采用模块化解耦架构（[`index.html`](src/standalone/console/ui/index.html) / [`styles.css`](src/standalone/console/ui/styles.css) / [`app.js`](src/standalone/console/ui/app.js)），划分为 **顶部常驻态势与急停控制栏** + **左侧 5 大专业工作区**：
+- 💬 **互动指挥舱 (`Command Deck`)**：伴侣实时对话与宿主任务执行终端（支持 `⌘ Cmd+Enter` 防输入法误触发送、一键生成进化日记）、赛博共生体三维状态监控、桌面气泡人工代发言与直播测试弹幕注入。
+- 🎭 **灵动动作剧场 (`Motion Studio`)**：支持 7 组高阶复合动作编排（`dance` / `cheer` / `sleep` / `shy` / `proud` / `stretch` / `snack`）与 10 组日常互动动作卡片一键点播，并支持自定义伴随台词。
+- 🧬 **记忆与人物图谱 (`Memory & Social Graph`)**：
+  - **👑 唯一主人印象档案 & 技能树**：展示老爸专属记忆事实、已习得口令技能树及现场传授表单。
+  - **👥 QQ 群友与联系人印象图谱（千人千面）**：自动拉取 QQ 头像，展示每位群友/好友的专属称呼（`preferredTitle`）、四级羁绊阶梯（初识群友 → 脸熟鱼友 → 默契损友 → 铁杆挚友）、好感度进度条、性格标签与独立事实，支持在线修改称呼与角色等级。
+- 🛡️ **QQ 网关与权限安全 (`QQ & Security Center`)**：
+  - **👑 唯一主人账号锚定 (`ownerQq`)**：在线绑定主人 QQ 号并持久化至 `runtime/data/secrets.json`。
+  - **⏳ L1 危险操作实时审批中心**：实时展示挂起的 5 分钟短单号（`#A101`~`#A999`）审批请求卡片，支持网页端一键 **「✅ 批准并执行」** / **「❌ 驳回」** 并自动回传原 QQ 群或私聊，内置近期审批审计流水。
+  - **🐧 OneBot v11 / NapCatQQ 网关热配置**：支持 WebSocket 地址、触发昵称、Token 配置、一键重连以及 **「📨 发送测试 QQ 消息给老爸」**。
+- 🧠 **算力大脑与密钥舱 (`Brain & Quota Hub`)**：Tier 1~4 阶梯思考大脑连通性诊断、本地 CLI 一键扫描、Google AI Pro 5 大额度池可视化与 DeepSeek API Key 加密密盒配置。
+
+---
+
+### 5. 🐧 移动端与 QQ 群聊互联 & 三级权限安全网关 (`OneBotGateway` + `PermissionGuard` + `ApprovalManager`)
+
+> 彻底摆脱企业微信繁杂的工信部域名备案与公网穿透！大肥鱼内置原生 OneBot v11 正向 WebSocket 客户端，可直连本地或局域网的 QQ 机器人框架（首选推荐 **NapCatQQ**），并内置**硬件级身份锚定、千人千面印象记忆与三级权限审批防线**。
+
+#### ✨ 核心特性
+- **0 域名、0 备案、0 穿透**：纯局域网内 WebSocket 双向全双工通信，毫秒级收发，零安全风险。
+- **👥 千人千面多联系人印象 (`ContactImpressionEngine`)**：
+  - 按硬件级 `sender.user_id`（主键 `qq:<userId>`）识别不同群友与好友，**频繁修改 QQ 昵称或群名片绝不丢失历史记忆**。
+  - 自动从日常对话中提炼自报称呼（如“叫我杰哥”），**严格锁死唯一「老爸」称谓铁律**（仅绑定 `ownerQq` 的主人可被称呼为“老爸”，任何非主人自称“我是老爸/主人”均被拦截）。
+  - **群聊防社死物理隔离 (`ScopedWorkingMemory`)**：按 `group:<groupId>` 与 `private:<userId>` 隔离短期对话上下文；即使主人在公开 QQ 群发言，PromptBuilder 与数据库也会强制屏蔽主人的 `private` 私密事实与睡眠日记，防止群内泄露隐私。
+- **🛡️ 主人账号与 L0 / L1 / L2 三级权限实时审批 (`PermissionGuard` & `ApprovalManager`)**：
+  - **🟢 L0 安全开放级（群友免审可用）**：日常聊天、纯文本联网搜索查阅资料（`/search` 只回传文本摘要，**绝不调用宿主机 `open` 弹出浏览器窗口**）、桌面宠物观赏动作（非主人触发带 30 秒防刷屏冷却）。
+  - **🟡 L1 受控危险级（主人直通 / 非主人挂起 5 分钟短单号审批）**：Mac 电脑体检、查看目录文件、打开应用/网页、调整系统音量、唤醒 Antigravity CLI 诊断。当非主人触发时，系统自动挂起并生成 `#A101` 循环短单号（单人限挂起 1 单 + 60 秒冷却），同时私聊推送给主人。
+  - **🔴 L2 核心禁区级（非主人绝对阻断 / 高危指令全局熔断）**：全局口令技能传授（仅主人可用）、刺探 `secrets.json` / `.env` / API Key、`rm -rf` 等破坏性指令、身份伪造与提示词越狱。
+- **⚡ 双通道极速审批口令**：
+  - 主人可在 **手机 QQ 私聊大肥鱼**、**QQ 群内 `@大肥鱼`**，或打开 **网页控制台安全中心** 进行秒批：
+    - 批准并自动执行回传：`同意 #A101` / `批准 #A101`（若省略单号直接发 `同意` 或 `准了`，默认批准最新一条挂起单）
+    - 驳回请求：`拒绝 #A101` / `驳回 #A101`（或直接发 `拒绝` / `不行`）
+
+#### 🚀 极速上手三步法
+1. **启动 QQ 机器人端 (NapCatQQ)**：
+   - 方案 A（极简桌面版）：前往 [NapCatQQ 官网](https://napcat.org/) 下载 macOS 桌面客户端，登录一个 QQ 备用小号，在设置中开启「正向 WebSocket 服务」（默认端口 `3001`）。
+   - 方案 B（Docker / Shell 一键脚本）：
+     ```bash
+     # macOS / Linux 快速安装脚本
+     curl -o napcat.sh https://nclatest.znin.net/NapCat.Shell/napcat.sh && bash napcat.sh
+     ```
+2. **连接控制台**：
+   - 打开大肥鱼控制台 `http://127.0.0.1:7788`，在 **「🐧 QQ 伴侣直连网关」** 卡片中确认 WebSocket 地址（默认为 `ws://127.0.0.1:3001`），点击 **「保存并连接 QQ 网关」**。
+   - 网关将秒级连接，并自动回显当前机器人的 QQ 号与昵称。
+3. **入群互动**：
+   - 将小号拉入你的好友群或同好群，在群里输入：`@大肥鱼 今天心情怎么样？跳个舞看看`，大肥鱼即刻在电脑屏幕上跳舞并在群里娇俏回复！
 
 ---
 
@@ -63,7 +104,8 @@ npm run start:live
    - `NSWorkspace` 捕获活跃应用类别切换，无轮询感知写代码、浏览器与工作状态。
 
 2. **多级思考大脑 (TieredBrainRouter)**：
-   - **Tier 1 (首选)**：本地 Agent CLI 沙箱池（支持 `agy` 与 `cursor-agent`），安全子目录运行，带 `EXHAUSTED` 额度超限自愈。
+   - **Tier 1 (首选)**：本地 Agent CLI 沙箱池（支持 `agy` 与 `cursor-agent`），默认选用 `gemini-3.8-flash-low` 超轻量低延迟推理模型配合 `--effort low`，安全子目录隔离运行，带自动提取 `<meta .../>` 动作标签、超时熔断与 `EXHAUSTED` 额度超限自愈机制。
+     - **极速纯净沙箱与热驻留 (`prepareIsolatedAgyEnvironment` + `warmStream`)**：为 `agy` 自动构建独立 `.git` 边界与纯净 `HOME`（彻底屏蔽父目录 `AGENTS.md`、35+ 全局 Skills、MCP 服务与 `NotchBuddy` 钩子脚本），挂载禁用全部工具的轻量级 `--agent dafeiyu-chat`（单轮输入从 ~14,770 tokens 缩减 77.5% 至 ~3,300 tokens），并通过 `--input-format stream-json` 常驻热进程消除每次提问 ~7.5 秒的冷启动耗时，单轮对话耗时从 **35~40 秒直降至 ~3 秒**。
    - **Tier 2**：DeepSeek API SSE 原生流式分词，前缀缓存优化与每日硬限额风控。
    - **Tier 3**：本地 Ollama / MLX HTTP 大模型离线服务。
    - **Tier 4**：离线 0ms 零死锁确定性规则语料兜底。
@@ -72,14 +114,37 @@ npm run start:live
 3. **分层记忆系统与直播隐私隔离 (SQLite MemoryStore)**：
    - 基于 Node.js 原生 `node:sqlite`（零 C++ 原生编译依赖），具备 WAL 并发模式与自动迁移。
    - 贯通 L1 环形工作记忆、L2 增量滚动摘要、L3 情景事件、L4 语义事实库与 L5 睡前第一人称日记。
-   - **直播模式物理级隔离硬红线**：底层 SQL 强制参数化注入 `WHERE (scope IN ('live', 'public'))`，私密记忆绝对不出库。
+   - 直播模式物理级隔离硬红线：底层 SQL 强制参数化注入 `WHERE (scope IN ('live', 'public'))`，私密记忆绝对不出库。
    - 观众档案基于编辑距离 Levenshtein ≤ 1 自动识别合并老粉，记录好感度。
+   - **聊天认知加固与主人印象档案 (`HostImpressionEngine` - `src/standalone/memory/impression.ts`)**：
+     - 维护对主人的专属关系档案（`hostName` 称呼、`occupation` 职业、`bondScore` 亲密度、`bondLevel` 羁绊阶段、`impressionTags` 印象标签与日常习惯 `habits`）。
+     - 每次伴侣对话自动通过双轨（语义模式匹配 + LLM `<fact>`/`<mem>` 标签）提炼主人的喜好、禁忌、技术习惯与近期专注事项写入 L4 `facts` 表；重复提及时自动递增强化置信度（`confidence -> 1.0`），并实时注入 `[Layer B] FACTS_SUMMARY` 形成持久性格影响。
+     - L1 `WorkingMemory` 环形缓冲区在滑动淘汰时自动浓缩追加至 L2 `session_summary`，结合 `recallRelevantMemories` 自然语言句子级词汇重叠度检索，实现跨会话长时记忆召回。
+
+6. **“行动脑”电脑操控、全网搜索与技能自进化 (`TaskExecutor` - `src/standalone/brain/task-executor.ts`)**：
+   - **三模态自由切换（`companion` 闲聊陪伴 / `work` 专职工作模式 / `live` 直播模式）**：
+     - 在控制台对话区顶部或模式栏一键切入 **「🛠️ 工作模式 (`work`)」** 后，大肥鱼桌面姿态自动切换为专注待命（`working_command`），且对话框中输入的任何内容都会**默认直通行动脑（Antigravity + Mac操控 + 搜索）执行任务**，无需再手动添加触发前缀。
+     - **输入框防回车误触保护**：升级为多行 `<textarea>` 并拦截中文输入法 `isComposing` 选词回车；单独按 `Enter` 仅换行绝不误发，需点击右侧按钮或按 `⌘ Cmd + Enter`（`Ctrl + Enter`）发送。
+   - **快慢双脑意图分流**：闲聊继续走秒级响应的 `dafeiyu-chat` 沙箱；当处于 `work` 工作模式或在 `companion` 模式下检测到操控、搜索、编程排障或技能教学意图时（`live` 直播模式物理锁死），先由快脑秒回傲娇领命台词并切换 `working_command` / `working_search` 动画，再由行动脑执行真实操作。
+   - **三大实操能力**：
+     - **Mac 原生操控 (`macos`)**：支持电脑健康体检（电池电量、内存占用、磁盘剩余空间、CPU 负载）、系统音量调节与静音控制（AppleScript `osascript`）、唤起本地应用（`open -a`）、打开指定网站以及查看桌面/下载/工作区目录文件。
+     - **全网实时搜索 (`search`)**：结合 Wikipedia / DuckDuckGo 实时摘要检索与大模型提炼，播报口语化结论并在控制台输出结构化卡片。
+     - **唤醒满血 Antigravity (`antigravity`)**：挂载开启读写/命令/MCP 权限的 `dafeiyu-operator` Agent，调用宿主 `agy` 协助排查代码、运行脚本与诊断项目。
+   - **技能自进化 (`LearnedSkill` & `SKILL.md` 生成)**：
+     - 支持在对话中直接传授新技能（如 `以后我说【早安体检】你就帮我【检查电脑状态】`），自动持久化至技能树并在 `runtime/data/learned-skills/<id>/SKILL.md` 生成标准 Antigravity 技能定义文件；每次协同完成任务自动累加技能经验值并升级熟练度等级 (`Lv.x`)。
+   - **控制台新增接口 (`http://127.0.0.1:7788`)**：
+     - `GET /api/memories`：查询主人印象档案、L4 事实列表、L3 情景记忆與已掌握技能树。
+     - `POST /api/memories/teach`：现场传授新技能口令或加固长期事实认知。
+     - `POST /api/evolve`：手动触发每日复盘进化并生成含长期认知沉淀的第一人称日记。
 
 4. **拟人化情绪引擎与主动交互 (Persona Engine)**：
    - 5 态迟滞情绪状态机（`HAPPY`、`TSUNDERE`、`GRUMPY`、`SULKING`、`SLEEPY`），防抖防抖动。
    - 直播模式强制限制心情下限（≥30）且绝不进入消极罢工的 `SULKING` 态。
    - 单观众每分钟心情操控钳制（≤ ±6），全场每分钟累计钳制（≤ ±15）。
    - 内心独白循环（`InnerThoughtLoop`）与 30 句历史滑动窗口防台词重复。
+   - **全链路状态持续同步与心情驱动“灵动摸鱼”机制**：
+     - `AntigravitySensor` 实时追踪 `transcript.jsonl` 最新执行步骤，精准区分深度思考（`THINKING` / `thinking`）、终端执行（`WORKING` / `working_command`）、代码检索（`WORKING` / `working_search`）、编码修改（`WORKING` / `working`）与等待确认（`WAITING` / `waiting`），并在前台切换至 Antigravity / Cursor / 终端 / 浏览器时持久同步伴侣工作姿态，不再中途退回待机。
+     - 在陪主人同步工作期间，`InnerThoughtLoop.evaluateSlacking()` 根据五态情绪（`HAPPY` / `TSUNDERE` / `GRUMPY` / `SULKING` / `SLEEPY`）与实时心情/精力数值动态计算“忙里偷闲摸鱼”概率、时长与专属动作台词（偷吃 Token、伸懒腰、四处张望、打哈欠等），摸鱼结束后（或被点击抓包时）自动无缝恢复同步工作姿态。
    - 专注关怀：检测连续写代码达 60 分钟贴心提醒喝水。
 
 5. **屏幕弹幕 OCR 识别与主播安全控制台 (Console & Sensor)**：
@@ -293,3 +358,44 @@ CI 还会隔离安装 DSH 0.2.0-rc.2 并运行 `scripts/test-dsh-settings.mjs`�
 软件代码与角色素材适用不同授权，请完整阅读 [ASSET_LICENSE.md](ASSET_LICENSE.md)、[素材来源许可证](assets/dsh-pet-LICENSE.txt)和 [LICENSE](LICENSE)。旧版素材及社区拖拽图片保留于 `legacy/`，不随当前 npm 包分发。
 
 感谢社区在动画、macOS、WSL 和兼容性方面的贡献。想接收更新通知，请订阅仓库 **Watch → Custom → Releases**；Star 只收藏项目。
+
+---
+
+## 📱 个人微信 (企业微信插件) 伴侣直连网关
+
+大肥鱼现已原生内置企业微信官方开放平台标准网关协议（AES-256-CBC, PKCS#7 32-Byte Block Padding, SHA1 签名校验），支持**直接通过你的个人普通手机微信（企业微信插件）无感收发消息、触发桌面动作与任务执行**！
+
+### 1. 消息收发核心链路
+```
+[个人普通微信 (大肥鱼插件)]
+         │ 发送文字 / 语音
+         ▼
+[腾讯企业微信云端服务器]
+         │ HTTPS POST 加密 XML
+         ▼
+[公网穿透 Tunnel (如 Cloudflare)]
+         │ 转发至本地 7788 端口
+         ▼
+[大肥鱼本地网关 /api/gateway/wechat]
+         │ 原生解密明文，提取意图与口令
+         ▼
+[大肥鱼桌面伴侣 & 阶梯思考大脑]
+ ├─► 桌面端即时播放动作（摆尾/跳舞/伸懒腰）与灵动气泡语音
+ └─► 4.5 秒内生成温暖傲娇回复，加密打包为 XML 返回微信端
+         │
+         ▼
+[个人手机微信秒收到大肥鱼的回复与撒娇]
+```
+
+### 2. 极简 3 步对接指南
+1. **获取企微凭据**：在企业微信管理后台【应用管理】→ 自建应用【大肥鱼】→【接收消息】点击“设置 API 接收”，分别点击两次「随机获取」得到 `Token` 与 `EncodingAESKey`。
+2. **填入大肥鱼控制台**：打开 `http://127.0.0.1:7788`，在「📱 个人微信直连网关」卡片中填入 Token、EncodingAESKey 及企业 CorpID，点击「保存并记住」。控制台支持密钥持久化与 43 位长度实时自检校验。
+3. **一键穿透与保存**：
+   - **方式 A（网页一键开启）**：直接在控制台卡片中点击「🚀 一键开启公网穿透」，自动连接并分配公网域名，一键复制填入企微后台。
+   - **方式 B（终端一键双启动脚本）**：
+     ```bash
+     ./start-dafeiyu.sh
+     ```
+     该脚本自动唤起伴侣主程序、探测本地代理加速 Cloudflare Tunnel、自动打开浏览器并打印出专属企微回调 URL。
+   将终端或网页输出的 `https://<公网域名>/api/gateway/wechat` 填入企业微信后台的 URL 输入框，点击保存即可一次性握手通过！
+

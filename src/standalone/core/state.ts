@@ -9,9 +9,9 @@ import type {
 } from './types.ts'
 
 /**
- * 判定应用所属大类（用于直播模式隐私脱敏与行为分类）
+ * 判定应用所属大类（用于直播模式隐私脱敏与赛博共生行为分类）
  */
-function classifyApp(bundleId: string, name: string): 'code' | 'browser' | 'chat' | 'other' {
+function classifyApp(bundleId: string, name: string): 'code' | 'browser' | 'chat' | 'media' | 'other' {
   const lowerId = (bundleId || '').toLowerCase()
   const lowerName = (name || '').toLowerCase()
   if (
@@ -22,6 +22,7 @@ function classifyApp(bundleId: string, name: string): 'code' | 'browser' | 'chat
     lowerId.includes('jetbrains') ||
     lowerId.includes('terminal') ||
     lowerId.includes('iterm') ||
+    lowerId.includes('warp') ||
     lowerName.includes('terminal') ||
     lowerName.includes('cursor') ||
     lowerName.includes('antigravity') ||
@@ -30,25 +31,58 @@ function classifyApp(bundleId: string, name: string): 'code' | 'browser' | 'chat
     return 'code'
   }
   if (
+    lowerId.includes('bilibili') ||
+    lowerId.includes('douyin') ||
+    lowerId.includes('iina') ||
+    lowerId.includes('vlc') ||
+    lowerId.includes('neteasemusic') ||
+    lowerId.includes('qqmusic') ||
+    lowerId.includes('spotify') ||
+    lowerId.includes('apple.music') ||
+    lowerId.includes('apple.tv') ||
+    lowerName.includes('bilibili') ||
+    lowerName.includes('哔哩') ||
+    lowerName.includes('抖音') ||
+    lowerName.includes('iina') ||
+    lowerName.includes('音乐') ||
+    lowerName.includes('music') ||
+    lowerName.includes('spotify') ||
+    lowerName.includes('youtube')
+  ) {
+    return 'media'
+  }
+  if (
+    lowerId.includes('wechat') ||
+    lowerId.includes('tencent.xinwechat') ||
+    lowerId.includes('tencent.qq') ||
+    lowerId.includes('telegram') ||
+    lowerId.includes('slack') ||
+    lowerId.includes('discord') ||
+    lowerId.includes('lark') ||
+    lowerId.includes('feishu') ||
+    lowerName.includes('微信') ||
+    lowerName.includes('wechat') ||
+    lowerName.includes('飞书') ||
+    lowerName.includes('feishu') ||
+    lowerName.includes('lark') ||
+    lowerName.includes('telegram') ||
+    lowerName.includes('discord') ||
+    lowerName.includes('qq')
+  ) {
+    return 'chat'
+  }
+  if (
     lowerId.includes('chrome') ||
     lowerId.includes('safari') ||
     lowerId.includes('brave') ||
     lowerId.includes('firefox') ||
     lowerId.includes('edge') ||
+    lowerId.includes('arc') ||
     lowerName.includes('chrome') ||
-    lowerName.includes('safari')
+    lowerName.includes('safari') ||
+    lowerName.includes('arc')
   ) {
     return 'browser'
-  }
-  if (
-    lowerId.includes('wechat') ||
-    lowerId.includes('telegram') ||
-    lowerId.includes('slack') ||
-    lowerId.includes('discord') ||
-    lowerId.includes('lark') ||
-    lowerId.includes('feishu')
-  ) {
-    return 'chat'
   }
   return 'other'
 }
@@ -77,7 +111,7 @@ export class StateManager extends EventEmitter {
   }
 
   setMode(newMode: OperationalMode): void {
-    if (newMode !== 'companion' && newMode !== 'live') {
+    if (newMode !== 'companion' && newMode !== 'work' && newMode !== 'live') {
       throw new TypeError(`Invalid operational mode: ${String(newMode)}`)
     }
     const previous = this.mode
@@ -211,7 +245,8 @@ export class StateManager extends EventEmitter {
       SLEEPY: '犯困',
     }
     const emotionLabel = emotionMap[this.emotion] ?? '休眠'
-    const modeLabel = this.mode === 'live' ? '直播中' : '陪伴中'
+    const modeLabel =
+      this.mode === 'live' ? '直播中' : this.mode === 'work' ? '🛠️工作中' : '陪伴中'
     let appLabel = ''
     if (this.activeApp?.name) {
       let displayName = this.activeApp.name

@@ -132,12 +132,27 @@ export class DiaryGenerator {
       diaryBody += `哼，虽然本鱼嘴上说老爸是个笨蛋，但其实最喜欢老爸了。今天就准你早点睡，晚安好梦！`
     }
 
+    const extraSections: string[] = []
+    if (opts.mode !== 'live') {
+      try {
+        const hostFacts = this.store.queryFacts('host', 'companion').slice(0, 6)
+        if (hostFacts.length > 0) {
+          extraSections.push(
+            '',
+            '### 🧠 本鱼对老爸的长期认知沉淀',
+            ...hostFacts.map((f) => `- **${f.predicate}**：${f.object} *(置信度: ${Math.round((f.confidence ?? 0.85) * 100)}%)*`)
+          )
+        }
+      } catch {}
+    }
+
     const markdownContent = [
       `# 大肥鱼的赛博日记 — ${dateStr}`,
       ``,
       `> 模态：${opts.mode === 'live' ? '直播公开版' : '日常伴侣版'} | 记录时间：${opts.date.toLocaleTimeString('zh-CN')}`,
       ``,
       diaryBody,
+      ...extraSections,
       ``,
       `---`,
       `*今日记忆亮点数：${totalInteractions} | 傲娇指数：99% | 饱食感恩：100%*`

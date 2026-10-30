@@ -5,7 +5,10 @@
 
 import path from 'node:path'
 import fs from 'node:fs'
+import os from 'node:os'
 import childProcess from 'node:child_process'
+import { parseStreamingMeta } from './streaming.ts'
+import { FIXED_PERSONA_LAYER_A } from './prompt-builder.ts'
 import type {
   BrainProvider,
   BrainRequest,
@@ -30,12 +33,117 @@ export interface CliConfig {
   sandboxDir?: string
   timeoutMs?: number
   enabled?: boolean
+  /** 是否为 agy 启用常驻 stream-json 热进程复用与纯净环境隔离 */
+  warmStream?: boolean
   cooldownOnExhaustedMs?: number
   probeIntervalMs?: number
   breakerThreshold?: number
   breakerCooldownMs?: number
   /** 自定义命令执行器 (便于单元测试注入或无真实 CLI 环境时使用) */
   executor?: (prompt: string, sandboxDir: string, options?: { timeoutMs?: number; abortSignal?: AbortSignal }) => Promise<{ stdout: string; stderr: string; exitCode: number }>
+}
+
+/**
+ * 构建大肥鱼专属的极速隔离沙箱与纯净 HOME 环境：
+ * 1. 创建独立 .git 边界阻断向上遍历，彻底避免扫描父目录 AGENTS.md / .agents/skills
+ * 2. 隔离 HOME/.gemini/config 为空目录，剥离 35+ 全局 Skills、4 个 MCP 服务与 NotchBuddy Hooks
+ * 3. 挂载禁用写工具/子智能体/MCP 的轻量级 dafeiyu-chat 专属 Agent，将单次输入从 ~14,770 tokens 降至 ~3,300 tokens
+ */
+export function prepareIsolatedAgyEnvironment(baseDir: string = path.join(os.tmpdir(), 'dafeiyu-agy-fast-sandbox')): {
+  workDir: string
+  homeDir: string
+} {
+  const workDir = path.join(baseDir, 'work')
+  const homeDir = path.join(baseDir, 'home')
+  const gitDir = path.join(workDir, '.git')
+  const agentDir = path.join(workDir, '.agents', 'agents', 'dafeiyu-chat')
+  const cliConfigDir = path.join(homeDir, '.gemini', 'antigravity-cli')
+  const globalConfigDir = path.join(homeDir, '.gemini', 'config')
+
+  try {
+    fs.mkdirSync(gitDir, { recursive: true })
+    fs.mkdirSync(agentDir, { recursive: true })
+    fs.mkdirSync(cliConfigDir, { recursive: true })
+    fs.mkdirSync(globalConfigDir, { recursive: true })
+
+    // 写入极简无工具 dafeiyu-chat Agent 定义（内嵌 Layer A 固定人设）
+    const agentMdPath = path.join(agentDir, 'AGENT.md')
+    const agentMdContent = `---
+name: dafeiyu-chat
+description: CyberFish Daughter (大肥鱼) pure lightweight companion chat persona without tools.
+enable_write_tools: false
+enable_subagent_tools: false
+enable_mcp_tools: false
+---
+${FIXED_PERSONA_LAYER_A}
+
+【极速响应硬性规定】：
+严禁调用任何工具（禁止读取文件、禁止搜索、禁止执行命令），收到输入后必须直接输出首行 <meta .../> 标签与台词文本！
+`
+    if (!fs.existsSync(agentMdPath) || fs.readFileSync(agentMdPath, 'utf-8') !== agentMdContent) {
+      fs.writeFileSync(agentMdPath, agentMdContent, 'utf-8')
+    }
+
+    // 软链宿主登录态凭证与 macOS Keychain，保证零重新登录
+    const realHome = os.homedir()
+    for (const file of ['jetski_state.pbtxt', 'installation_id']) {
+      const src = path.join(realHome, '.gemini', 'antigravity-cli', file)
+      const dest = path.join(cliConfigDir, file)
+      if (fs.existsSync(src) && !fs.existsSync(dest)) {
+        try {
+          fs.symlinkSync(src, dest)
+        } catch {}
+      }
+    }
+
+    // 写入极简纯净 settings.json（不含 MCP 权限列表与外部 statusLine shell 脚本）
+    const settingsPath = path.join(cliConfigDir, 'settings.json')
+    const cleanSettings = JSON.stringify(
+      {
+        agentMode: 'accept-edits',
+        enableTerminalSandbox: true,
+        toolPermission: 'proceed-in-sandbox',
+        trustedWorkspaces: [workDir],
+      },
+      null,
+      2
+    )
+    if (!fs.existsSync(settingsPath)) {
+      fs.writeFileSync(settingsPath, cleanSettings, 'utf-8')
+    }
+
+    // 软链 macOS Library Keychains 与 Application Support 以支持 OAuth Token 读取
+    const libDir = path.join(homeDir, 'Library')
+    fs.mkdirSync(libDir, { recursive: true })
+    for (const sub of ['Keychains', 'Application Support']) {
+      const src = path.join(realHome, 'Library', sub)
+      const dest = path.join(libDir, sub)
+      if (fs.existsSync(src) && !fs.existsSync(dest)) {
+        try {
+          fs.symlinkSync(src, dest)
+        } catch {}
+      }
+    }
+  } catch {
+    // 容错降级
+  }
+
+  return { workDir, homeDir }
+}
+
+/**
+ * 剥离在 dafeiyu-chat Agent.md 中已固化的 [Layer A] 文本，减少每轮重复 Token 传输
+ */
+function stripRedundantLayerA(promptText: string): string {
+  const layerBIdx = promptText.indexOf('[Layer B]')
+  if (layerBIdx !== -1) {
+    return promptText.slice(layerBIdx).trim()
+  }
+  const layerCIdx = promptText.indexOf('[Layer C]')
+  if (layerCIdx !== -1) {
+    return promptText.slice(layerCIdx).trim()
+  }
+  return promptText
 }
 
 /**
@@ -92,36 +200,61 @@ export function parseCliStructuredOutput(stdout: string, stderr: string = ''): B
 
   // 4. 规范提取 BrainOutput
   if (parsed && typeof parsed === 'object') {
-    const replyText = String(parsed.reply ?? parsed.text ?? parsed.content ?? '').trim()
-    if (replyText) {
-      const mood =
-        typeof parsed.moodIntent === 'number'
-          ? Math.max(-2, Math.min(2, Math.round(parsed.moodIntent)))
-          : 0
+    let rawReplyText = String(
+      parsed.reply ?? parsed.text ?? parsed.content ?? parsed.response ?? ''
+    ).trim()
+
+    if (rawReplyText) {
+      // 提取并剥离嵌入的 <meta .../> 标签
+      const metaParsed = parseStreamingMeta(rawReplyText)
+      const clip = typeof parsed.clip === 'string' ? parsed.clip : (metaParsed?.clip ?? 'talking_normal')
+      const tone = typeof parsed.tone === 'string' ? parsed.tone : (metaParsed?.tone ?? 'happy')
+      const rawMood = typeof parsed.moodIntent === 'number' ? parsed.moodIntent : (metaParsed?.moodIntent ?? 0)
+      const mood = Math.max(-2, Math.min(2, Math.round(rawMood)))
+      const fed = typeof parsed.fed === 'boolean' ? parsed.fed : Boolean(metaParsed?.fed)
+      let memory = typeof parsed.memory === 'string' ? parsed.memory.trim() : metaParsed?.memory
+
+      // 剔除 <meta .../> 标签
+      let cleanText = rawReplyText.replace(/<meta\s+[^>]+\/?>\s*/gi, '').trim()
+
+      // 剔除并提取 <mem ...>...</mem> 标签
+      const memMatch = cleanText.match(/<mem(?:\s+imp="(\d+)")?>([\s\S]*?)<\/mem>/i)
+      if (memMatch) {
+        if (!memory) memory = memMatch[2].trim()
+        cleanText = cleanText.replace(/<mem(?:\s+imp="\d+")?>[\s\S]*?<\/mem>/gi, '').trim()
+      }
+
+      // 绝不回退至含有 <meta> 的 rawReplyText，若剔除后为空则填充元气台词
+      const fallbackReply = (clip === 'success' || clip === 'dance') ? '老爸，大功告成啦！✨' : '诶嘿，本鱼随时待命哦~ 🐟'
+      const finalReply = cleanText || fallbackReply
+
       return {
-        reply: replyText,
-        text: replyText,
-        clip: typeof parsed.clip === 'string' ? parsed.clip : 'talking_normal',
-        tone: typeof parsed.tone === 'string' ? parsed.tone : 'happy',
+        reply: finalReply,
+        text: finalReply,
+        clip,
+        tone,
         moodIntent: mood,
-        fed: Boolean(parsed.fed),
-        memory: typeof parsed.memory === 'string' ? parsed.memory.trim() : undefined,
+        fed,
+        memory,
         to: typeof parsed.to === 'string' ? parsed.to.trim() : undefined,
       }
     }
   }
 
   // 5. 容错降级：如果完全无法提取合法 JSON，则清洗 markdown 标记后取纯文本为回复
-  const cleanReply = fullText.replace(/```[\s\S]*?```/g, '').trim()
-  if (cleanReply) {
-    return {
-      reply: cleanReply,
-      text: cleanReply,
-      clip: 'talking_normal',
-      tone: 'happy',
-      moodIntent: 0,
-      fed: false,
-    }
+  let cleanReply = fullText.replace(/```[\s\S]*?```/g, '').trim()
+  const metaParsed = parseStreamingMeta(cleanReply)
+  cleanReply = cleanReply.replace(/<meta\s+[^>]+\/?>\s*/gi, '').trim()
+  const fallbackReply = (metaParsed?.clip === 'success') ? '老爸，任务搞定啦！✨' : '诶嘿，本鱼随时待命哦~ 🐟'
+  const finalReply = cleanReply || fallbackReply
+
+  return {
+    reply: finalReply,
+    text: finalReply,
+    clip: metaParsed?.clip || 'talking_normal',
+    tone: metaParsed?.tone || 'happy',
+    moodIntent: metaParsed?.moodIntent || 0,
+    fed: Boolean(metaParsed?.fed),
   }
 
   throw new Error('Failed to extract meaningful reply from CLI output')
@@ -150,6 +283,19 @@ export class AgentCliProvider implements BrainProvider {
   private estimatedLatencyMs = 2000
   private latencySamples: number[] = [2000]
 
+  // 常驻 stream-json 热守护进程状态
+  private warmProc: childProcess.ChildProcess | null = null
+  private warmReady: boolean = false
+  private warmInitPromise: Promise<void> | null = null
+  private warmTurnCount: number = 0
+  private warmStdoutBuffer: string = ''
+  private activeStreamRequest: {
+    resolve: (output: BrainOutput) => void
+    reject: (err: Error) => void
+    startTime: number
+    timer: any
+  } | null = null
+
   constructor(options: CliConfig = {}) {
     this.id = options.id || 'agent_cli'
     this.name = options.name || (options.command === 'cursor-agent' ? 'cursor-agent' : 'agy')
@@ -160,16 +306,169 @@ export class AgentCliProvider implements BrainProvider {
       name: this.name,
       command: cmd,
       args: options.args || (cmd === 'cursor-agent'
-        ? ['-p', '{{PROMPT}}', '--output-format', 'json', '--mode', 'ask', '--sandbox', 'enabled']
-        : ['-p', '{{PROMPT}}', '--output-format', 'json', '--effort', 'low', '--sandbox', '--disable-slash-commands', '--print-timeout', '20s']),
+        ? ['-p', '{{PROMPT}}', '--output-format', 'json', '--mode', 'ask', '--sandbox', 'enabled', '--trust']
+        : ['-p', '{{PROMPT}}', '--output-format', 'json', '--agent', 'dafeiyu-chat', '--model', 'gemini-3.8-flash-low', '--effort', 'low', '--sandbox', '--disable-slash-commands', '--print-timeout', '45s']),
       sandboxDir: options.sandboxDir || `runtime/sandbox/agent-cli/${this.name}`,
-      timeoutMs: options.timeoutMs ?? 20000,
+      timeoutMs: options.timeoutMs ?? 45000,
       enabled: options.enabled ?? true,
+      warmStream: options.warmStream ?? false,
       cooldownOnExhaustedMs: options.cooldownOnExhaustedMs ?? 3600_000, // 1小时
       probeIntervalMs: options.probeIntervalMs ?? 900_000,              // 15分钟探针
       breakerThreshold: options.breakerThreshold ?? 3,                 // 3次失败触发熔断
       breakerCooldownMs: options.breakerCooldownMs ?? 60_000,          // 60秒冷却
       executor: options.executor,
+    }
+  }
+
+  /**
+   * 后台预热常驻 agy stream-json 守护进程，消除每次提问 ~7.5s 的进程冷启动耗时
+   */
+  warmup(): Promise<void> {
+    if (this.config.executor || this.config.command !== 'agy' || !this.config.enabled) {
+      return Promise.resolve()
+    }
+    if (this.warmProc && this.warmReady) {
+      return Promise.resolve()
+    }
+    if (this.warmInitPromise) {
+      return this.warmInitPromise
+    }
+
+    this.warmInitPromise = new Promise<void>((resolve) => {
+      const { workDir, homeDir } = prepareIsolatedAgyEnvironment()
+      const streamArgs = [
+        '--input-format',
+        'stream-json',
+        '--output-format',
+        'stream-json',
+        '--agent',
+        'dafeiyu-chat',
+        '--model',
+        'gemini-3.8-flash-low',
+        '--effort',
+        'low',
+        '--sandbox',
+        '--disable-slash-commands',
+        '-p',
+        '',
+      ]
+
+      let initSettled = false
+      const settleInit = () => {
+        if (!initSettled) {
+          initSettled = true
+          this.warmInitPromise = null
+          resolve()
+        }
+      }
+
+      try {
+        const proc = childProcess.spawn(this.config.command, streamArgs, {
+          cwd: workDir,
+          env: {
+            ...process.env,
+            HOME: homeDir,
+            GIT_DIR: undefined,
+            GIT_WORK_TREE: undefined,
+          },
+          shell: false,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        })
+        proc.unref?.()
+
+        this.warmProc = proc
+        this.warmReady = false
+        this.warmTurnCount = 0
+        this.warmStdoutBuffer = ''
+
+        const initTimer = setTimeout(() => {
+          settleInit()
+        }, 12000)
+        initTimer.unref?.()
+
+        proc.stdout?.on('data', (chunk: Buffer) => {
+          this.warmStdoutBuffer += chunk.toString('utf-8')
+          let newlineIdx: number
+          while ((newlineIdx = this.warmStdoutBuffer.indexOf('\n')) !== -1) {
+            const line = this.warmStdoutBuffer.slice(0, newlineIdx).trim()
+            this.warmStdoutBuffer = this.warmStdoutBuffer.slice(newlineIdx + 1)
+            if (!line || !line.startsWith('{')) continue
+            try {
+              const evt = JSON.parse(line)
+              if (evt.event === 'init') {
+                this.warmReady = true
+                clearTimeout(initTimer)
+                settleInit()
+              } else if (evt.event === 'result' && this.activeStreamRequest) {
+                const req = this.activeStreamRequest
+                this.activeStreamRequest = null
+                clearTimeout(req.timer)
+
+                if (evt.result?.status === 'ERROR' || evt.result?.error) {
+                  const errMsg = String(evt.result?.error || 'Warm stream turn error')
+                  this.recordFailure(errMsg)
+                  req.reject(new Error(errMsg))
+                } else {
+                  try {
+                    const rawResp = String(evt.result?.response || '')
+                    const output = parseCliStructuredOutput(rawResp)
+                    this.recordSuccess(Date.now() - req.startTime)
+                    req.resolve(output)
+                  } catch (parseErr: any) {
+                    this.recordFailure(parseErr.message)
+                    req.reject(parseErr)
+                  }
+                }
+
+                // 每满 8 轮自动在后台轮换新会话，防止多轮历史累积拖慢推理
+                this.warmTurnCount++
+                if (this.warmTurnCount >= 8) {
+                  this.stopWarmDaemon()
+                  this.warmup().catch(() => {})
+                }
+              }
+            } catch {
+              // 忽略非 JSON 行
+            }
+          }
+        })
+
+        const handleExit = () => {
+          clearTimeout(initTimer)
+          if (this.warmProc === proc) {
+            this.warmProc = null
+            this.warmReady = false
+          }
+          if (this.activeStreamRequest) {
+            const req = this.activeStreamRequest
+            this.activeStreamRequest = null
+            clearTimeout(req.timer)
+            req.reject(new Error('Warm agy stream process exited unexpectedly'))
+          }
+          settleInit()
+        }
+
+        proc.on('error', handleExit)
+        proc.on('close', handleExit)
+      } catch {
+        settleInit()
+      }
+    })
+
+    return this.warmInitPromise
+  }
+
+  /**
+   * 停止并清理常驻热进程
+   */
+  stopWarmDaemon(): void {
+    if (this.warmProc) {
+      try {
+        this.warmProc.kill('SIGTERM')
+      } catch {}
+      this.warmProc = null
+      this.warmReady = false
+      this.warmInitPromise = null
     }
   }
 
@@ -219,17 +518,117 @@ export class AgentCliProvider implements BrainProvider {
     return sorted[idx]
   }
 
-  getStatus(): ProviderStatusInfo {
-    let binPath = ''
+  /**
+   * 自动在系统 PATH 及常见 macOS 用户目录中检索 CLI 二进制路径
+   */
+  public resolveBinPath(): string {
+    const cmd = this.config.command
+    if (path.isAbsolute(cmd) && fs.existsSync(cmd)) {
+      return cmd
+    }
     try {
-      binPath = childProcess.execSync(`which ${this.config.command}`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }).trim()
+      const found = childProcess
+        .execSync(`which ${cmd}`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] })
+        .trim()
+      if (found) return found
     } catch {}
+
+    const candidateDirs = [
+      path.join(os.homedir(), '.local', 'bin'),
+      '/opt/homebrew/bin',
+      '/usr/local/bin',
+      '/usr/bin',
+      path.join(os.homedir(), '.cargo', 'bin'),
+    ]
+    for (const dir of candidateDirs) {
+      const candidate = path.join(dir, cmd)
+      if (fs.existsSync(candidate)) {
+        return candidate
+      }
+    }
+    return ''
+  }
+
+  /**
+   * 一键探测 CLI 安装状态、重置异常熔断并更新路径
+   */
+  public detectAndRefresh(): {
+    id: string
+    name: string
+    command: string
+    installed: boolean
+    binPath: string
+    state: ProviderState
+  } {
+    const binPath = this.resolveBinPath()
+    if (binPath) {
+      this.config.enabled = true
+      if (this.state === 'CIRCUIT_BROKEN' || this.state === 'EXHAUSTED' || this.state === 'DISABLED') {
+        this.resetCircuitBreaker()
+      }
+    }
+    return {
+      id: this.id,
+      name: this.name,
+      command: this.config.command,
+      installed: Boolean(binPath),
+      binPath,
+      state: binPath ? this.state : ('DISABLED' as ProviderState),
+    }
+  }
+
+  /**
+   * 主动测试该 CLI 通道的推理连通性与真实响应耗时
+   */
+  public async testConnectivity(): Promise<{
+    ok: boolean
+    latencyMs: number
+    binPath: string
+    replySample?: string
+    error?: string
+  }> {
+    const start = Date.now()
+    const binPath = this.resolveBinPath()
+    if (!binPath) {
+      return {
+        ok: false,
+        latencyMs: Date.now() - start,
+        binPath: '',
+        error: `未在系统中检测到命令 "${this.config.command}"，请检查安装路径`,
+      }
+    }
+
+    try {
+      this.resetCircuitBreaker()
+      const output = await this.execute(
+        '[Layer C]\n请直接用一句话俏皮回答：本鱼的CLI大脑通道测试连通成功！',
+        undefined,
+        { timeoutMs: 25000 }
+      )
+      return {
+        ok: true,
+        latencyMs: Date.now() - start,
+        binPath,
+        replySample: output.reply || output.text || 'CLI 响应正常',
+      }
+    } catch (err: any) {
+      return {
+        ok: false,
+        latencyMs: Date.now() - start,
+        binPath,
+        error: err?.message || 'CLI 执行测试失败',
+      }
+    }
+  }
+
+  getStatus(): ProviderStatusInfo {
+    const binPath = this.resolveBinPath()
 
     return {
       id: this.id,
       tier: this.tier,
       name: this.name,
-      state: this.state,
+      state: binPath ? this.state : 'DISABLED',
       totalInvocations: this.totalInvocations,
       successCount: this.successCount,
       failureCount: this.failureCount,
@@ -409,10 +808,79 @@ export class AgentCliProvider implements BrainProvider {
       }
     }
 
-    // 5. 原生子进程沙箱执行
-    const finalArgs = this.config.args.map((arg) => (arg === '{{PROMPT}}' ? promptText : arg))
-    if (!this.config.args.includes('{{PROMPT}}')) {
-      finalArgs.push('-p', promptText)
+    // 5. 若为 agy 且开启了常驻热流模式 (warmStream)，优先走零冷启动的常驻进程管道
+    const isAgy = this.config.command === 'agy'
+    if (isAgy && this.config.warmStream && !this.activeStreamRequest) {
+      await this.warmup()
+      if (this.warmProc && this.warmReady && this.warmProc.stdin?.writable) {
+        const compactPrompt = stripRedundantLayerA(promptText)
+        return new Promise<BrainOutput>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            if (this.activeStreamRequest) {
+              this.activeStreamRequest = null
+              this.stopWarmDaemon()
+              this.warmup().catch(() => {})
+              const err = new Error(`Warm CLI execution timed out after ${timeout}ms`)
+              this.recordFailure(err.message)
+              reject(err)
+            }
+          }, timeout)
+
+          if (options?.abortSignal) {
+            options.abortSignal.addEventListener('abort', () => {
+              if (this.activeStreamRequest) {
+                clearTimeout(this.activeStreamRequest.timer)
+                this.activeStreamRequest = null
+                this.stopWarmDaemon()
+                this.warmup().catch(() => {})
+                reject(new Error('CLI execution aborted by caller'))
+              }
+            })
+          }
+
+          this.activeStreamRequest = {
+            resolve,
+            reject,
+            startTime,
+            timer,
+          }
+
+          const payload = JSON.stringify({
+            event: 'user',
+            message: { content: compactPrompt },
+          })
+          this.warmProc!.stdin!.write(`${payload}\n`)
+        })
+      }
+    }
+
+    // 6. 原生子进程沙箱执行（若为 agy 则使用纯净隔离环境与 dafeiyu-chat 轻量级 Agent）
+    let effectiveCwd = resolvedSandbox
+    let effectiveEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      GIT_DIR: undefined,
+      GIT_WORK_TREE: undefined,
+    }
+    let effectivePrompt = promptText
+
+    if (isAgy) {
+      const { workDir, homeDir } = prepareIsolatedAgyEnvironment()
+      effectiveCwd = workDir
+      effectiveEnv = {
+        ...effectiveEnv,
+        HOME: homeDir,
+      }
+      effectivePrompt = stripRedundantLayerA(promptText)
+    }
+
+    const baseArgs = [...this.config.args]
+    if (isAgy && !baseArgs.includes('--agent')) {
+      baseArgs.push('--agent', 'dafeiyu-chat')
+    }
+
+    const finalArgs = baseArgs.map((arg) => (arg === '{{PROMPT}}' ? effectivePrompt : arg))
+    if (!baseArgs.includes('{{PROMPT}}')) {
+      finalArgs.push('-p', effectivePrompt)
     }
 
     return new Promise<BrainOutput>((resolve, reject) => {
@@ -421,12 +889,8 @@ export class AgentCliProvider implements BrainProvider {
       let isSettled = false
 
       const child = childProcess.spawn(this.config.command, finalArgs, {
-        cwd: resolvedSandbox,
-        env: {
-          ...process.env,
-          GIT_DIR: undefined,
-          GIT_WORK_TREE: undefined,
-        },
+        cwd: effectiveCwd,
+        env: effectiveEnv,
         shell: false,
         stdio: ['pipe', 'pipe', 'pipe'],
       })

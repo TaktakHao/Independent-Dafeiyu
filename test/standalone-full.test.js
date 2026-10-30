@@ -11,6 +11,8 @@ import { OutputGuard } from '../src/standalone/safety/output-guard.ts'
 import { EventRouter } from '../src/standalone/events/router.ts'
 import { PriorityEventQueue } from '../src/standalone/events/queue.ts'
 import { ScreenDanmakuSensor } from '../src/standalone/sensors/screen-danmaku.ts'
+import { initDatabase, closeDatabase, MemoryStore, HostImpressionEngine } from '../src/standalone/memory/index.ts'
+import { TaskExecutor } from '../src/standalone/brain/task-executor.ts'
 
 test('InputGuard accurately blocks prompt injection attacks and sensitive words', () => {
   const guard = new InputGuard(['违禁词', '涉政'])
@@ -146,10 +148,81 @@ test('Full bootstrap lifecycle (start, API probe, stop) in headless mode', async
     assert.ok(json.stats.hunger >= 0)
     assert.ok(json.stats.mood >= 0)
 
+    // 切换为 work 工作模式并验证
+    const workModeRes = await fetch('http://127.0.0.1:7799/api/mode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'work' }),
+    })
+    assert.equal(workModeRes.status, 200)
+    const workModeJson = await workModeRes.json()
+    assert.equal(workModeJson.mode, 'work')
+
     // 触发急停
     const stopRes = await fetch('http://127.0.0.1:7799/api/emergency-stop', { method: 'POST' })
     assert.equal(stopRes.status, 200)
+
+    // 查询记忆与印象档案 API
+    const memRes = await fetch('http://127.0.0.1:7799/api/memories')
+    assert.equal(memRes.status, 200)
+    const memJson = await memRes.json()
+    assert.ok(memJson.profile)
+    assert.ok(Array.isArray(memJson.skills))
   } finally {
     await app.stop()
+  }
+})
+
+test('HostImpressionEngine reinforces host facts, bond score, and custom skills from chat', async () => {
+  const db = initDatabase({ path: ':memory:' })
+  const store = new MemoryStore(db)
+  const impression = new HostImpressionEngine(store, 'runtime/temp/test-learned-skills')
+
+  try {
+    // 第一次提及喜好与称呼
+    const res1 = impression.assimilateChat('以后叫我Wesson，我最喜欢吃麻辣火锅，我习惯用pnpm写前端', '哼，本鱼记住啦！')
+    assert.ok(res1.extractedFacts.length >= 2)
+    const p1 = impression.getProfile()
+    assert.equal(p1.hostName, 'Wesson')
+    assert.ok(p1.bondScore > 100)
+
+    // 第二次重复提及同一喜好，验证置信度强化 (impression reinforcement)
+    const res2 = impression.assimilateChat('我最喜欢吃麻辣火锅', '知道啦知道啦~')
+    const hotpotFact = res2.extractedFacts.find((f) => f.predicate.includes('喜好'))
+    assert.ok(hotpotFact)
+    assert.ok(hotpotFact.confidence > 0.85, '重复提及应强化事实置信度')
+
+    // 现场传授技能并由 TaskExecutor 识别触发
+    const executor = new TaskExecutor({ impression })
+    const teachIntent = executor.detectIntent('以后我说【早安体检】你就帮我【检查电脑状态】', 'companion')
+    assert.equal(teachIntent.isTask, true)
+    assert.equal(teachIntent.category, 'skill_teach')
+    const teachExec = await executor.execute(teachIntent, 'companion')
+    assert.equal(teachExec.success, true)
+
+    // 触发刚学会的口令技能
+    const customIntent = executor.detectIntent('早安体检', 'companion')
+    assert.equal(customIntent.isTask, true)
+    assert.equal(customIntent.subAction, 'custom_skill')
+    const customExec = await executor.execute(customIntent, 'companion')
+    assert.equal(customExec.success, true)
+    assert.match(customExec.detailReport, /Mac 实时健康体检报告/)
+
+    // 工作模式 (work) 下，无需特殊前缀也自动识别为 Antigravity 任务
+    const workIntent = executor.detectIntent('检查一下项目里的 package.json 依赖配置', 'work')
+    assert.equal(workIntent.isTask, true)
+    assert.equal(workIntent.category, 'antigravity')
+
+    // 直播模式下严禁触发任何电脑操控任务
+    const liveIntent = executor.detectIntent('帮我检查电脑状态', 'live')
+    assert.equal(liveIntent.isTask, false)
+    const liveExec = await executor.execute({ isTask: true, category: 'macos', queryOrTarget: 'system_status', ackText: '', workingClip: 'idle' }, 'live')
+    assert.equal(liveExec.success, false)
+  } finally {
+    closeDatabase(db)
+    try {
+      const fs = await import('node:fs')
+      fs.rmSync('runtime/temp/test-learned-skills', { recursive: true, force: true })
+    } catch {}
   }
 })

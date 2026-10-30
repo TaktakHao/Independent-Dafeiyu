@@ -6,6 +6,8 @@ build/
 runtime/bin/
 runtime/data/
 runtime/temp/
+runtime/logs/
+runtime/sandbox/
 *.db
 *.db-wal
 *.db-shm
@@ -15,3 +17,9 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .dsh-phase0/
+.env
+.env.*
+!.env.example
+.DS_Store
+napcat-data/
+

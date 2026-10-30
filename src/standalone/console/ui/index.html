@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>🐋 CyberFish 大肥鱼桌面伴侣终端 · 深海赛博玻璃舱</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="/ui/styles.css" />
+</head>
+<body>
+  <!-- ==================== 顶部常驻态势与急停控制栏 ==================== -->
+  <header class="topbar">
+    <div class="brand-group">
+      <div class="brand-logo">🐋</div>
+      <div>
+        <div class="brand-title">CyberFish 大肥鱼 · 深海赛博指挥舱</div>
+        <div class="brand-sub">
+          <span id="syncAppBadge" style="color: #34d399;">✨ 实时状态共频中</span>
+          <span>·</span>
+          <span id="bondBadge" style="color: #c4b5fd;">💜 羁绊同步中...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 全局三态模式分段切换器 -->
+    <div class="mode-segmented" role="tablist" aria-label="运行模式切换">
+      <button id="tabCompanionBtn" class="mode-seg-btn active-companion" onclick="toggleMode('companion')">
+        💬 闲聊陪伴模式
+      </button>
+      <button id="tabWorkBtn" class="mode-seg-btn" onclick="toggleMode('work')">
+        🛠️ 工作模式 (专职执行)
+      </button>
+      <button id="tabLiveBtn" class="mode-seg-btn" onclick="toggleMode('live')">
+        🔴 直播模式 (风控锁定)
+      </button>
+    </div>
+
+    <div class="topbar-right">
+      <span class="badge" id="modeBadge">🟢 陪伴模式</span>
+      <button
+        class="badge badge-warn"
+        id="topApprovalBadge"
+        style="cursor: pointer; display: none;"
+        onclick="switchTab('security')"
+      >
+        ⏳ 待审批 (0)
+      </button>
+      <button class="btn btn-danger btn-sm" onclick="emergencyStop()">
+        ⚡ 一键紧急急停
+      </button>
+    </div>
+  </header>
+
+  <!-- ==================== 主体双栏工作台架构 ==================== -->
+  <div class="app-shell">
+    <!-- 左侧毛玻璃功能域导航栏 -->
+    <aside class="sidebar">
+      <div class="nav-list">
+        <div class="nav-section-label">CyberFish Workspaces</div>
+        <button class="nav-item active" data-tab="command" onclick="switchTab('command')">
+          <span>💬 互动指挥舱</span>
+        </button>
+        <button class="nav-item" data-tab="motion" onclick="switchTab('motion')">
+          <span>🎭 灵动动作剧场</span>
+        </button>
+        <button class="nav-item" data-tab="memory" onclick="switchTab('memory')">
+          <span>🧬 记忆与人物图谱</span>
+          <span class="badge badge-purple" id="navContactsCount" style="padding: 1px 7px; font-size: 11px;">0</span>
+        </button>
+        <button class="nav-item" data-tab="security" onclick="switchTab('security')">
+          <span>🛡️ QQ 网关与权限安全</span>
+          <span class="nav-badge" id="navPendingBadge" style="display: none;">0</span>
+        </button>
+        <button class="nav-item" data-tab="brain" onclick="switchTab('brain')">
+          <span>🧠 算力大脑与密钥舱</span>
+        </button>
+      </div>
+
+      <div class="sidebar-footer">
+        <div style="font-weight: 700; color: #38bdf8; margin-bottom: 4px;">🛡️ 三级安全防线已激活</div>
+        <div>• 唯一主人称谓铁律「老爸」</div>
+        <div>• 群聊防社死私密记忆物理隔离</div>
+        <div>• L1 宿主操控实时单号审批</div>
+      </div>
+    </aside>
+
+    <!-- 右侧聚焦工作区画布 -->
+    <main class="workspace-canvas">
+      <!-- ==================== ① 💬 互动指挥舱 (Command Deck) ==================== -->
+      <section id="pane-command" class="tab-pane active">
+        <div class="command-layout">
+          <!-- 左主栏：伴侣对话与任务执行流 -->
+          <div class="card">
+            <div class="card-header">
+              <h2>💬 伴侣实时对话 &amp; 🛠️ 宿主任务执行中枢</h2>
+              <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                <button class="btn btn-purple btn-sm" onclick="triggerEvolve()">🧬 生成今日进化日记</button>
+              </div>
+            </div>
+
+            <div
+              id="workModeBanner"
+              style="display: none; margin-bottom: 12px; padding: 10px 14px; border-radius: 10px; background: rgba(168, 85, 247, 0.16); border: 1px solid rgba(168, 85, 247, 0.45); color: #e9d5ff; font-size: 12px;"
+            >
+              🛠️ <strong>当前处于【工作模式】</strong>：你输入的任何内容都会直接交给大肥鱼的<strong>行动脑（Antigravity + Mac操控 + 联网搜索）</strong>帮你干活执行，无需再加特殊触发词！
+            </div>
+
+            <div class="chat-container" id="chatLogs">
+              <div class="chat-msg daughter">
+                <div class="chat-meta">🐋 大肥鱼</div>
+                老爸你来啦！想轻松聊天就用<strong>「💬 闲聊陪伴模式」</strong>，想让我专心帮你干活、查资料、跑命令或调用 Antigravity，随时点顶部切到<strong>「🛠️ 工作模式」</strong>哦~ ✨
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 10px; align-items: stretch; margin-bottom: 8px;">
+              <textarea
+                id="chatInput"
+                class="input-box"
+                rows="2"
+                style="margin-bottom: 0; resize: vertical; min-height: 58px; font-family: inherit;"
+                placeholder="💬 跟大肥鱼聊聊天、分享喜好，或下达任务...（直接按 Enter 换行防误触，按 ⌘ Cmd+Enter 发送）"
+                onkeydown="handleChatKeydown(event)"
+              ></textarea>
+              <button
+                class="btn btn-primary"
+                style="white-space: nowrap; padding: 0 22px; font-size: 14px;"
+                id="sendBtn"
+                onclick="sendChat()"
+              >
+                🚀 发送消息
+              </button>
+            </div>
+
+            <div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 12px;">
+              🛡️ <strong>防中文输入法误触保护</strong>：单独按 <code>Enter</code> 仅换行或选词；请按 <code>⌘ Cmd + Enter</code>（或 <code>Ctrl + Enter</code>）发送。
+            </div>
+
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
+              <span style="font-size: 12px; color: var(--text-secondary);">⚡ 快捷指令：</span>
+              <button class="btn btn-outline btn-sm" onclick="quickCommand('帮我检查电脑状态和电池内存')">💻 Mac 电脑体检</button>
+              <button class="btn btn-outline btn-sm" onclick="quickCommand('帮我看看当前目录有什么文件')">📂 查看工作区文件</button>
+              <button class="btn btn-outline btn-sm" onclick="quickCommand('帮我搜一下 TypeScript 性能最佳实践')">🔍 联网搜索资讯</button>
+              <button class="btn btn-outline btn-sm" onclick="quickCommand('用 antigravity 帮我检查当前项目的核心模块结构')">🪄 Antigravity 诊断</button>
+              <button class="btn btn-purple btn-sm" onclick="playPetAction('dance')">💃 跳个元气摆尾舞</button>
+              <button class="btn btn-outline btn-sm" onclick="playPetAction('sleep')">😴 趴下眯会儿觉</button>
+            </div>
+          </div>
+
+          <!-- 右辅栏：共生体状态、人工代发言与测试弹幕 -->
+          <div>
+            <!-- 赛博共生体状态与算力粮仓 -->
+            <div class="card">
+              <div class="card-header">
+                <h2>📊 赛博共生体三维状态</h2>
+                <button class="btn btn-outline btn-sm" onclick="feed()">🐟 奖励零食 (+心情)</button>
+              </div>
+
+              <div class="stats-bar">
+                <span>🔋 算力饱食度 <small style="color: var(--text-secondary); font-size: 11px;">(AI Pro + DeepSeek)</small></span>
+                <span id="hungerVal">--%</span>
+              </div>
+              <div class="progress">
+                <div class="progress-fill" id="hungerFill" style="background: linear-gradient(90deg, #f59e0b, #fbbf24); width: 0%;"></div>
+              </div>
+              <div id="quotaFormulaHint" style="font-size: 11px; color: var(--text-secondary); margin-top: -6px; margin-bottom: 12px;">
+                正在读取 Google AI Pro 与 DeepSeek 剩余额度...
+              </div>
+
+              <div class="stats-bar">
+                <span>❤️ 心情值 <small style="color: var(--text-secondary); font-size: 11px;">(随工作起伏 / 互动回血)</small></span>
+                <span id="moodVal">--</span>
+              </div>
+              <div class="progress">
+                <div class="progress-fill" id="moodFill" style="background: linear-gradient(90deg, #ec4899, #f472b6); width: 0%;"></div>
+              </div>
+
+              <div class="stats-bar">
+                <span>⚡ 精力值 <small style="color: var(--text-secondary); font-size: 11px;">(编码消耗 / 锁屏恢复)</small></span>
+                <span id="energyVal">--%</span>
+              </div>
+              <div class="progress">
+                <div class="progress-fill" id="energyFill" style="background: linear-gradient(90deg, #3b82f6, #38bdf8); width: 0%;"></div>
+              </div>
+
+              <button class="btn btn-primary btn-sm" style="width: 100%;" id="syncQuotaBtn" onclick="forceRefreshQuota()">
+                🔄 同步 Google AI Pro &amp; DeepSeek 额度
+              </button>
+            </div>
+
+            <!-- 人工代发言 (快捷插话) -->
+            <div class="card">
+              <div class="card-header">
+                <h2>🗣️ 人工代发言 (桌面宠物气泡直出)</h2>
+              </div>
+              <input type="text" id="sayInput" class="input-box" placeholder="输入要代大肥鱼在桌面气泡直接说出的话..." />
+              <div style="display: flex; gap: 8px;">
+                <button class="btn btn-primary btn-sm" style="flex: 1;" onclick="hostSay('success')">🎉 欢呼说出</button>
+                <button class="btn btn-outline btn-sm" style="flex: 1;" onclick="hostSay('idle')">💬 平常说出</button>
+              </div>
+            </div>
+
+            <!-- 直播间模拟弹幕注入器 -->
+            <div class="card">
+              <div class="card-header">
+                <h2>📺 直播间弹幕 / 礼物模拟注入</h2>
+              </div>
+              <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                <input type="text" id="danmakuUserInput" class="input-box" style="margin-bottom: 0; flex: 1;" placeholder="观众昵称 (如: 榜一鱼友)" />
+                <input type="text" id="danmakuTextInput" class="input-box" style="margin-bottom: 0; flex: 2;" placeholder="弹幕内容 (如: 大肥鱼跳个舞)" />
+              </div>
+              <button class="btn btn-outline btn-sm" style="width: 100%;" onclick="injectTestDanmaku()">
+                📡 注入测试弹幕事件
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== ② 🎭 灵动动作剧场 (Motion Studio) ==================== -->
+      <section id="pane-motion" class="tab-pane">
+        <div class="card">
+          <div class="card-header">
+            <h2>🎭 大肥鱼灵动神态与复合动作演练剧场</h2>
+            <span class="badge" id="actionStatusBadge">待命就绪</span>
+          </div>
+          <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 14px;">
+            点击下方任意动作卡片，桌面上的大肥鱼即刻执行对应骨骼/帧动画并说出伴随台词。你也可以在下方自定义伴随台词，或在聊天/QQ 中直接声控触发！
+          </p>
+
+          <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 18px;">
+            <input
+              type="text"
+              id="customMotionSpeechInput"
+              class="input-box"
+              style="margin-bottom: 0;"
+              placeholder="✨ 可选：输入演练动作时的自定义伴随台词（留空则使用动作默认台词）..."
+            />
+          </div>
+
+          <div style="margin-bottom: 20px;">
+            <div style="font-size: 12px; font-weight: 700; color: #c084fc; margin-bottom: 10px;">
+              ✨ 元气高阶复合动作 (多段连贯神态编排流 · 7 组)
+            </div>
+            <div class="motion-grid">
+              <button class="motion-card macro" onclick="playPetAction('dance')">
+                <div class="motion-card-title">💃 元气摆尾舞</div>
+                <div class="motion-card-sub">code: <code>dance</code> · 欢快连跳摆尾</div>
+              </button>
+              <button class="motion-card macro" onclick="playPetAction('cheer')">
+                <div class="motion-card-title">🎉 任务大欢庆</div>
+                <div class="motion-card-sub">code: <code>cheer</code> · 撒花庆祝胜利</div>
+              </button>
+              <button class="motion-card macro" onclick="playPetAction('sleep')">
+                <div class="motion-card-title">😴 趴桌打呼噜</div>
+                <div class="motion-card-sub">code: <code>sleep</code> · 哈欠连天入眠</div>
+              </button>
+              <button class="motion-card macro" onclick="playPetAction('shy')">
+                <div class="motion-card-title">⁄(⁄•⁄ω⁄•⁄)⁄ 害羞撒娇</div>
+                <div class="motion-card-sub">code: <code>shy</code> · 脸红扭捏贴贴</div>
+              </button>
+              <button class="motion-card macro" onclick="playPetAction('proud')">
+                <div class="motion-card-title">😎 傲娇叉腰</div>
+                <div class="motion-card-sub">code: <code>proud</code> · 得意求夸奖</div>
+              </button>
+              <button class="motion-card macro" onclick="playPetAction('stretch')">
+                <div class="motion-card-title">🤸 舒爽大懒腰</div>
+                <div class="motion-card-sub">code: <code>stretch</code> · 伸展筋骨</div>
+              </button>
+              <button class="motion-card macro" onclick="playPetAction('snack')">
+                <div class="motion-card-title">🍙 偷炫小鱼干</div>
+                <div class="motion-card-sub">code: <code>snack</code> · 咔嚓解馋回血</div>
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <div style="font-size: 12px; font-weight: 700; color: #38bdf8; margin-bottom: 10px;">
+              🐾 经典肢体互动与日常工作神态 (10 组)
+            </div>
+            <div class="motion-grid">
+              <button class="motion-card" onclick="playPetAction('head_pat')">
+                <div class="motion-card-title">💆 摸摸头</div>
+                <div class="motion-card-sub">code: <code>head_pat</code></div>
+              </button>
+              <button class="motion-card" onclick="playPetAction('poke')">
+                <div class="motion-card-title">👈 戳一戳</div>
+                <div class="motion-card-sub">code: <code>poke</code></div>
+              </button>
+              <button class="motion-card" onclick="playPetAction('tail')">
+                <div class="motion-card-title">🐟 啪嗒甩大尾巴</div>
+                <div class="motion-card-sub">code: <code>tail</code></div>
+              </button>
+              <button class="motion-card" onclick="playPetAction('eat_token')">
+                <div class="motion-card-title">🍬 吃小鱼干</div>
+                <div class="motion-card-sub">code: <code>eat_token</code></div>
+              </button>
+              <button class="motion-card" onclick="playPetAction('idle_stretch')">
+                <div class="motion-card-title">🙆 伸懒腰</div>
+                <div class="motion-card-sub">code: <code>idle_stretch</code></div>
+              </button>
+              <button class="motion-card" onclick="playPetAction('idle_yawn')">
+                <div class="motion-card-title">🥱 打哈欠</div>
+                <div class="motion-card-sub">code: <code>idle_yawn</code></div>
+              </button>
+              <button class="motion-card" onclick="playPetAction('waiting')">
+                <div class="motion-card-title">👀 左右张望</div>
+                <div class="motion-card-sub">code: <code>waiting</code></div>
+              </button>
+              <button class="motion-card" onclick="playPetAction('thinking')">
+                <div class="motion-card-title">💭 深思冒泡</div>
+                <div class="motion-card-sub">code: <code>thinking</code></div>
+              </button>
+              <button class="motion-card" onclick="playPetAction('working_command')">
+                <div class="motion-card-title">💻 敲键盘查命令</div>
+                <div class="motion-card-sub">code: <code>working_command</code></div>
+              </button>
+              <button class="motion-card" onclick="playPetAction('working_search')">
+                <div class="motion-card-title">🔍 联网探查</div>
+                <div class="motion-card-sub">code: <code>working_search</code></div>
+              </button>
+            </div>
+          </div>
+
+          <div
+            id="actionFeedbackBanner"
+            style="display: none; margin-top: 14px; padding: 10px 14px; border-radius: 10px; background: var(--glass-input); border: 1px solid var(--border-glow); font-size: 12px; color: #e2e8f0;"
+          ></div>
+        </div>
+      </section>
+
+      <!-- ==================== ③ 🧬 记忆与人物图谱 (Memory & Social Graph) ==================== -->
+      <section id="pane-memory" class="tab-pane">
+        <!-- 上半区：唯一主人老爸专属印象档案与技能树 -->
+        <div class="card">
+          <div class="card-header">
+            <h2>👑 唯一主人（老爸）印象档案 &amp; 已掌握技能树</h2>
+            <span class="badge badge-purple" id="memoryStatsBadge">正在同步记忆库...</span>
+          </div>
+
+          <div class="grid-3">
+            <!-- 左：对老爸的印象与长期事实 -->
+            <div class="sub-box">
+              <div style="font-size: 13px; font-weight: 700; color: #38bdf8; margin-bottom: 8px;">
+                👨‍💻 本鱼眼中的老爸 (私密保护)
+              </div>
+              <div id="impressionTagsBox" class="pill-list" style="margin-bottom: 10px;"></div>
+              <div
+                id="factsListBox"
+                style="font-size: 12px; color: #cbd5e1; display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow-y: auto;"
+              >
+                <div style="color: var(--text-muted);">多跟本鱼聊聊你的喜好、习惯和正在做的事吧~</div>
+              </div>
+            </div>
+
+            <!-- 中：已进化技能树 -->
+            <div class="sub-box">
+              <div style="font-size: 13px; font-weight: 700; color: #c4b5fd; margin-bottom: 8px;">
+                🪄 已进化技能树 (仅主人可传授)
+              </div>
+              <div
+                id="skillsListBox"
+                style="font-size: 12px; color: #cbd5e1; display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow-y: auto;"
+              ></div>
+            </div>
+
+            <!-- 右：现场传授新技能或强化认知 -->
+            <div class="sub-box">
+              <div style="font-size: 13px; font-weight: 700; color: #34d399; margin-bottom: 10px;">
+                🎓 现场教大肥鱼新技能 / 新习惯
+              </div>
+              <input
+                type="text"
+                id="teachTriggerInput"
+                class="input-box"
+                placeholder="触发口令 或 记忆属性 (如: 早安开工 / 写代码习惯)"
+              />
+              <input
+                type="text"
+                id="teachActionInput"
+                class="input-box"
+                placeholder="执行任务 或 事实内容 (如: 检查电脑状态 / 喜欢用 pnpm)"
+              />
+              <div style="display: flex; gap: 8px;">
+                <button class="btn btn-purple btn-sm" style="flex: 1;" onclick="teachDaughter('skill')">
+                  ➕ 传授为新技能
+                </button>
+                <button class="btn btn-primary btn-sm" style="flex: 1;" onclick="teachDaughter('fact')">
+                  🧠 加固为长期记忆
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 下半区：QQ 群友与多联系人独立印象墙 (千人千面) -->
+        <div class="card">
+          <div class="card-header">
+            <h2>👥 QQ 群友与联系人独立印象图谱 (千人千面 · 改名不丢记忆)</h2>
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <input
+                type="text"
+                id="contactSearchInput"
+                class="input-box"
+                style="margin-bottom: 0; width: 210px; padding: 6px 10px; font-size: 12px;"
+                placeholder="🔍 搜索 QQ号 / 昵称 / 专属称呼..."
+                oninput="refreshContacts()"
+              />
+              <select
+                id="contactRoleFilter"
+                class="input-box"
+                style="margin-bottom: 0; width: 130px; padding: 6px 10px; font-size: 12px;"
+                onchange="refreshContacts()"
+              >
+                <option value="">全部角色</option>
+                <option value="owner">👑 唯一主人</option>
+                <option value="trusted">🛡️ 信任好友</option>
+                <option value="member">🐟 普通群友</option>
+                <option value="blocked">🚫 黑名单</option>
+              </select>
+              <button class="btn btn-outline btn-sm" onclick="refreshContacts()">🔄 刷新图谱</button>
+            </div>
+          </div>
+
+          <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 14px;">
+            大肥鱼按硬件级 <code>qq:&lt;userId&gt;</code> 识别每位群友，自动提炼专属称呼（严禁非主人冒充「老爸」），并独立沉淀每个人的性格标签、好感度与事实记忆。你可以在此直接修改大肥鱼对 TA 的称呼与角色等级。
+          </div>
+
+          <div id="contactsGrid" class="contacts-grid">
+            <div style="color: var(--text-muted); font-size: 13px;">正在加载联系人印象图谱...</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== ④ 🛡️ QQ 网关与权限安全 (QQ & Security Center) ==================== -->
+      <section id="pane-security" class="tab-pane">
+        <div class="grid-2">
+          <!-- 左卡：唯一主人账号绑定与三级风险矩阵说明 -->
+          <div class="card">
+            <div class="card-header">
+              <h2>👑 唯一主人账号锚定 &amp; 三级权限网关</h2>
+              <span class="badge badge-warn" id="securityOwnerBadge">主人 QQ: 未绑定</span>
+            </div>
+
+            <div class="sub-box" style="margin-bottom: 14px;">
+              <label style="font-size: 12px; font-weight: 700; color: #fbbf24; display: block; margin-bottom: 6px;">
+                🔐 唯一主人 QQ 号 (`ownerQq` · 享有免审最高执行特权 &amp; 唯一「老爸」称谓):
+              </label>
+              <div style="display: flex; gap: 8px;">
+                <input
+                  type="text"
+                  id="obOwnerQqInput"
+                  class="input-box mono"
+                  style="margin-bottom: 0;"
+                  placeholder="输入你本人的大号 QQ 号 (例如: 123456789)"
+                />
+                <button class="btn btn-primary btn-sm" style="white-space: nowrap;" onclick="saveOneBotConfig()">
+                  💾 绑定主人 QQ
+                </button>
+              </div>
+              <div style="font-size: 11px; color: var(--text-secondary); margin-top: 6px;">
+                绑定后自动加密持久化至 <code>runtime/data/secrets.json</code>。除该 QQ 号外，任何群友自称「我是老爸」均会被判定为越狱攻击并拦截。
+              </div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 8px; font-size: 12px;">
+              <div class="sub-box" style="border-left: 3px solid #10b981;">
+                <strong style="color: #34d399;">🟢 L0 安全开放级 (所有群友免审可用)</strong>
+                <div style="color: var(--text-secondary); margin-top: 2px;">
+                  日常闲聊互动、纯文本联网搜索查阅资料（<code>/search</code> 只回传摘要，绝不弹宿主机浏览器窗口）、桌面宠物观赏动作（内置 30 秒防刷屏冷却）。
+                </div>
+              </div>
+              <div class="sub-box" style="border-left: 3px solid #f59e0b;">
+                <strong style="color: #fbbf24;">🟡 L1 受控危险级 (主人直通 / 非主人挂起 5 分钟短单号审批)</strong>
+                <div style="color: var(--text-secondary); margin-top: 2px;">
+                  Mac 电脑体检、查看目录文件、打开应用/网页、调整系统音量、唤醒 Antigravity CLI 诊断。非主人触发时自动生成 <code>#A101</code> 短单号并私聊通知主人审批。
+                </div>
+              </div>
+              <div class="sub-box" style="border-left: 3px solid #ef4444;">
+                <strong style="color: #f87171;">🔴 L2 核心禁区级 (非主人绝对阻断 / 破坏性指令全局熔断)</strong>
+                <div style="color: var(--text-secondary); margin-top: 2px;">
+                  全局技能传授（仅主人可用）、刺探 <code>secrets.json</code> 或 API Key、<code>rm -rf</code> 等高危破坏命令、伪造主人身份越狱。
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右卡：危险操作实时审批队列与历史审计流水 -->
+          <div class="card">
+            <div class="card-header">
+              <h2>⏳ L1 危险操作实时审批中心</h2>
+              <button class="btn btn-outline btn-sm" onclick="refreshApprovals()">🔄 刷新审批队列</button>
+            </div>
+
+            <div
+              style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; padding: 8px 12px; border-radius: 8px; background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25);"
+            >
+              💡 <strong>双通道极速审批</strong>：除了在下方点击按钮，你也可以随时用手机 QQ 私聊大肥鱼或在群里 <code>@大肥鱼</code> 发送 <code>同意 #单号</code> / <code>拒绝 #单号</code>（省略单号默认批复最新一条）！
+            </div>
+
+            <div style="font-size: 12px; font-weight: 700; color: #fbbf24; margin-bottom: 8px;">
+              🔥 待审批挂起队列 (<span id="pendingCountText">0</span>)
+            </div>
+            <div id="pendingApprovalsList" style="margin-bottom: 16px;">
+              <div class="sub-box" style="color: var(--text-muted); font-size: 12px;">
+                🎉 当前没有挂起的危险操作请求，大肥鱼正在严密守护老爸的电脑~
+              </div>
+            </div>
+
+            <div style="font-size: 12px; font-weight: 700; color: var(--text-secondary); margin-bottom: 8px;">
+              📜 近期权限审批审计流水
+            </div>
+            <div
+              id="approvalHistoryList"
+              style="display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; font-size: 12px;"
+            ></div>
+          </div>
+        </div>
+
+        <!-- 下方全宽卡：OneBot v11 / NapCatQQ 网关连接配置 -->
+        <div class="card">
+          <div class="card-header">
+            <h2>🐧 QQ 伴侣直连网关配置 (OneBot v11 / NapCatQQ)</h2>
+            <span class="badge" id="onebotStatusBadge">⚪ 正在探测 QQ 网关...</span>
+          </div>
+
+          <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 14px;">
+            基于 OneBot v11 标准正向 WebSocket 协议，<strong style="color: #38bdf8;">彻底免公网穿透、免域名、免备案</strong>。本地运行 NapCatQQ 登录小号后即可在私聊与群聊中互动。
+          </div>
+
+          <div class="grid-2" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 12px;">
+            <div>
+              <label style="font-size: 11px; color: #cbd5e1; display: block; margin-bottom: 4px;">OneBot WebSocket 地址:</label>
+              <input
+                type="text"
+                id="obWsUrlInput"
+                class="input-box mono"
+                style="margin-bottom: 0;"
+                placeholder="ws://127.0.0.1:3001"
+                value="ws://127.0.0.1:3001"
+              />
+            </div>
+            <div>
+              <label style="font-size: 11px; color: #cbd5e1; display: block; margin-bottom: 4px;">触发昵称 (群聊叫此名字即唤醒):</label>
+              <input
+                type="text"
+                id="obBotNameInput"
+                class="input-box"
+                style="margin-bottom: 0;"
+                placeholder="大肥鱼"
+                value="大肥鱼"
+              />
+            </div>
+            <div>
+              <label style="font-size: 11px; color: #cbd5e1; display: block; margin-bottom: 4px;">Access Token (NapCat 密钥，无则留空):</label>
+              <input
+                type="password"
+                id="obTokenInput"
+                class="input-box"
+                style="margin-bottom: 0;"
+                placeholder="无 Token 可留空"
+              />
+            </div>
+            <div>
+              <label style="font-size: 11px; color: #cbd5e1; display: block; margin-bottom: 4px;">当前已连接 QQ 小号状态:</label>
+              <input
+                type="text"
+                id="obBotInfoInput"
+                class="input-box mono"
+                style="margin-bottom: 0; color: #34d399;"
+                readonly
+                value="未连接"
+              />
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 18px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; font-size: 12px; color: #cbd5e1;">
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+              <input type="checkbox" id="obAllowPrivateCheck" checked /> 启用 QQ 好友私聊直连
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+              <input type="checkbox" id="obAllowGroupCheck" checked /> 启用 QQ 群聊多群友互动
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+              <input type="checkbox" id="obGroupRequireAtCheck" checked /> 群聊中仅在 @大肥鱼 或叫大肥鱼名字时响应
+            </label>
+          </div>
+
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <button class="btn btn-primary" id="saveOneBotBtn" onclick="saveOneBotConfig()">
+              💾 保存配置并连接 QQ 网关
+            </button>
+            <button class="btn btn-purple" id="reconnectOneBotBtn" onclick="reconnectOneBot()">
+              🔄 立即触发重连
+            </button>
+            <button class="btn btn-outline" id="sendOneBotTestBtn" onclick="sendOneBotTest()">
+              📨 发送测试 QQ 消息给老爸
+            </button>
+            <span style="font-size: 12px; color: var(--text-secondary);" id="obHintText">
+              💡 本地启动 NapCatQQ 后，大肥鱼会自动连上并同步 QQ 小号昵称
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== ⑤ 🧠 算力大脑与密钥舱 (Brain & Quota Hub) ==================== -->
+      <section id="pane-brain" class="tab-pane">
+        <div class="grid-2">
+          <!-- 左卡：阶梯思考大脑与本地 CLI 实时状态 -->
+          <div class="card">
+            <div class="card-header">
+              <h2>🧠 阶梯思考大脑路由 (Tier 1 ~ Tier 4)</h2>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button class="btn btn-outline btn-sm" id="detectCliBtn" onclick="detectAllClis()">
+                  🔍 扫描本地 CLI &amp; 刷新额度
+                </button>
+                <span class="badge" id="activeTierBadge">当前生效: Tier 1</span>
+              </div>
+            </div>
+
+            <div class="provider-list" id="providerList">
+              <div style="font-size: 13px; color: var(--text-secondary);">正在探测本地 CLI 与 API 连通性...</div>
+            </div>
+
+            <div
+              id="testResultBanner"
+              style="display: none; margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--glass-input); border: 1px solid rgba(56, 189, 248, 0.4); font-size: 12px; color: #e2e8f0;"
+            ></div>
+          </div>
+
+          <!-- 右卡：Google AI Pro (Antigravity) 额度池 + DeepSeek 密钥密盒 -->
+          <div>
+            <div class="card">
+              <div class="card-header">
+                <h2>✨ Google AI Pro (Antigravity) 计划额度池</h2>
+                <span class="badge badge-purple" id="agPlanModelBadge">加载中...</span>
+              </div>
+              <div
+                id="agQuotaItemsBox"
+                style="display: flex; flex-direction: column; gap: 10px; font-size: 12px; color: #cbd5e1;"
+              >
+                <div style="color: var(--text-muted);">正在读取本地 Antigravity 额度池...</div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <h2>🔑 DeepSeek API 密钥密盒 &amp; 真实余额感知</h2>
+                <span class="badge badge-green" id="deepseekBalanceBadge">💰 余额待查询</span>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px;">
+                <input
+                  type="password"
+                  id="deepseekKeyInput"
+                  class="input-box"
+                  style="margin-bottom: 0; flex: 1; min-width: 220px;"
+                  placeholder="输入或更新 sk-******************************** (保存至 runtime/data/secrets.json)"
+                />
+                <button class="btn btn-primary btn-sm" id="saveKeyBtn" onclick="saveDeepSeekKey()">
+                  💾 保存密钥并查余额
+                </button>
+                <button class="btn btn-purple btn-sm" id="testDeepSeekBtn" onclick="testProvider('deepseek_sse')">
+                  🔌 测试连通性
+                </button>
+              </div>
+              <div class="sub-box" style="font-size: 12px; color: #cbd5e1;" id="keyHintText">
+                当前状态: 正在同步密钥与账户余额...
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- 非阻塞毛玻璃 Toast 通知容器 -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="/ui/app.js"></script>
+</body>
+</html>

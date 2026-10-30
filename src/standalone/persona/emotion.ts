@@ -177,6 +177,116 @@ export class EmotionEngine {
     this.applyMoodIntent(3, 'feed')
   }
 
+  /**
+   * 同步外部状态管理器中的数值至 EmotionEngine，消除事实源分裂
+   */
+  setStats(partial: Partial<RPGStats>, liveMode: boolean = false): void {
+    if (partial.hunger !== undefined) {
+      this.stats.hunger = Math.max(0, Math.min(100, Math.round(partial.hunger)))
+    }
+    if (partial.energy !== undefined) {
+      this.stats.energy = Math.max(0, Math.min(100, Math.round(partial.energy)))
+    }
+    if (partial.mood !== undefined) {
+      const minMood = liveMode ? 30 : 0
+      this.stats.mood = Math.max(minMood, Math.min(100, Math.round(partial.mood)))
+    }
+    this.emotion = evaluateEmotionFSM(
+      this.stats.mood,
+      this.stats.hunger,
+      this.stats.energy,
+      this.emotion,
+      liveMode
+    )
+  }
+
+  /**
+   * 赛博共生体状态同步时钟 (Symbiotic Metabolism Tick)
+   * 1. 饱食度 (hunger) 映射自 Antigravity + DeepSeek 实时剩余算力额度
+   * 2. 心情 (mood) 与精力 (energy) 跟随主人的工作时长、看视频娱乐、聊天社交、锁屏休息动态起伏
+   */
+  symbioticTick(context: {
+    appCategory?: 'code' | 'browser' | 'chat' | 'media' | 'other'
+    continuousWorkMin?: number
+    isAntigravityBusy?: boolean
+    screenLocked?: boolean
+    quotaSatietyPct?: number
+    liveMode?: boolean
+    hourOfDay?: number
+  }): { stats: RPGStats; emotion: EmotionState } {
+    const liveMode = Boolean(context.liveMode)
+    const minMood = liveMode ? 30 : 0
+    const hour = context.hourOfDay ?? new Date().getHours()
+
+    // 1. 饱食度 = 实时剩余算力额度 (Antigravity + DeepSeek)
+    if (typeof context.quotaSatietyPct === 'number' && !Number.isNaN(context.quotaSatietyPct)) {
+      this.stats.hunger = Math.max(5, Math.min(100, Math.round(context.quotaSatietyPct)))
+    }
+
+    // 2. 心情与精力：随主人行为状态自动流转
+    if (context.screenLocked) {
+      // 锁屏休息：精力快速充电，心情平和恢复
+      this.stats.energy = Math.min(100, this.stats.energy + 4)
+      if (this.stats.mood < 75) {
+        this.stats.mood = Math.min(75, this.stats.mood + 2)
+      }
+    } else if (context.appCategory === 'media') {
+      // 看视频 / 听歌放松：多巴胺回血，心情与精力显著恢复
+      this.stats.mood = Math.min(92, this.stats.mood + 3)
+      this.stats.energy = Math.min(98, this.stats.energy + 2)
+    } else if (context.appCategory === 'chat') {
+      // 聊天社交 / 水群吃瓜：解除工作紧绷，心情缓慢回温
+      this.stats.mood = Math.min(88, this.stats.mood + 2)
+      this.stats.energy = Math.min(95, this.stats.energy + 1)
+    } else if (context.appCategory === 'browser' && !context.isAntigravityBusy) {
+      // 网页冲浪 / 看资讯：心情温和恢复至舒适区
+      if (this.stats.mood < 82) {
+        this.stats.mood = Math.min(82, this.stats.mood + 1)
+      }
+      this.stats.energy = Math.min(92, this.stats.energy + 1)
+    } else if (context.appCategory === 'code' || context.isAntigravityBusy) {
+      // 持续停留在工作/编程状态：心情随专注时长呈现真实的阶段性起伏
+      const workMin = context.continuousWorkMin ?? 0
+      if (workMin <= 20) {
+        // 心流起步期 (0~20min)：陪老爸一起干劲满满，心情微升
+        if (this.stats.mood < 82) {
+          this.stats.mood = Math.min(82, this.stats.mood + 1)
+        }
+      } else if (workMin <= 45) {
+        // 专注紧绷期 (20~45min)：高强度紧绷下心情小幅波动回落，摸鱼小动作增加
+        const wave = Math.sin(workMin / 5) >= 0 ? 0 : -1
+        this.stats.mood = Math.max(minMood, Math.min(100, this.stats.mood + wave))
+        this.stats.energy = Math.max(25, this.stats.energy - 1)
+      } else {
+        // 久坐死磕期 (>45min)：枯燥疲惫累积，心情下滑催促老爸切出去看视频/聊天歇会儿
+        this.stats.mood = Math.max(minMood, this.stats.mood - 2)
+        this.stats.energy = Math.max(15, this.stats.energy - 2)
+      }
+    } else {
+      // 其他日常停留：向舒适基线平滑回归
+      if (this.stats.mood < this.baselineMood + 8) {
+        this.stats.mood = Math.min(this.baselineMood + 8, this.stats.mood + 1)
+      } else if (this.stats.mood > 85) {
+        this.stats.mood = Math.max(85, this.stats.mood - 1)
+      }
+    }
+
+    // 3. 深夜熬夜生物钟联动 (23:30 ~ 05:00)
+    if ((hour >= 23 || hour < 5) && !context.screenLocked) {
+      this.stats.energy = Math.max(12, this.stats.energy - 2)
+    }
+
+    this.emotion = evaluateEmotionFSM(
+      this.stats.mood,
+      this.stats.hunger,
+      this.stats.energy,
+      this.emotion,
+      liveMode
+    )
+
+    return { stats: { ...this.stats }, emotion: this.emotion }
+  }
+
   decayTick(liveMode: boolean): void {
     // 饱食度自然衰减
     this.stats.hunger = Math.max(0, this.stats.hunger - 1)

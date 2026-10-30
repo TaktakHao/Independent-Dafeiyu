@@ -21,7 +21,8 @@ export const DEFAULT_LATENCY_BUDGETS: Record<string, number> = {
   GIFT_THANKS_LARGE: 2500,
   DANMAKU: 4000,
   HOST_COMMAND: 8000,
-  COMPANION_CHAT: 15000,
+  HOST_TALK: 60000,
+  COMPANION_CHAT: 60000,
   PROACTIVE_SPEECH: 20000,
   SCHEDULED_TASK: 30000,
 }
@@ -377,6 +378,59 @@ export class TieredBrainRouter extends EventEmitter {
       this.scheduler.play(result.output.clip, { resumeState: 'IDLE' })
     }
     return result
+  }
+
+  /**
+   * 一键探测所有 CLI 通道并重置异常熔断状态
+   */
+  detectAllClis(): any[] {
+    const results: any[] = []
+    for (const p of this.providers) {
+      if (typeof (p as any).detectAndRefresh === 'function') {
+        results.push((p as any).detectAndRefresh())
+      }
+    }
+    return results
+  }
+
+  /**
+   * 测试指定大脑通道的连通性
+   */
+  async testProviderConnectivity(providerId: string): Promise<any> {
+    const target =
+      this.providers.find((p) => p.id === providerId) ||
+      (providerId === 'deepseek' ? this.deepSeekProvider : undefined)
+
+    if (!target) {
+      return { ok: false, latencyMs: 0, error: `未找到通道: ${providerId}` }
+    }
+
+    if (typeof (target as any).testConnectivity === 'function') {
+      return await (target as any).testConnectivity()
+    }
+
+    const start = Date.now()
+    try {
+      const res = await target.think(
+        {
+          prompt: '请回复连通正常',
+          eventType: 'DANMAKU',
+          mode: 'companion',
+        },
+        { timeoutMs: 8000 }
+      )
+      return {
+        ok: true,
+        latencyMs: Date.now() - start,
+        replySample: res.output?.reply || res.output?.text || '连通正常',
+      }
+    } catch (err: any) {
+      return {
+        ok: false,
+        latencyMs: Date.now() - start,
+        error: err?.message || '连接失败',
+      }
+    }
   }
 
   getAllStatus(): {

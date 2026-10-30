@@ -1,14 +1,45 @@
 /**
  * @file server.ts
- * 本地主播安全控制台：内置极简高质感暗黑 Web 控制面板与 RESTful 控制 API (http://127.0.0.1:7788)
+ * 本地主播安全控制台：内置「深海赛博玻璃舱 (Deep-Sea Cyber-Glass Studio)」Web 控制面板与全量 RESTful 控制 API (http://127.0.0.1:7788)
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { EventEmitter } from 'node:events'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { StateManager } from '../core/state.ts'
 import type { RuntimeScheduler } from '../core/scheduler.ts'
+import type { MemoryStore } from '../memory/store.ts'
+import type { HostImpressionEngine } from '../memory/impression.ts'
+import type { ContactImpressionEngine } from '../memory/contacts.ts'
+import type { PermissionGuard } from '../safety/permission-guard.ts'
+import type { ApprovalManager, ApprovalRequest } from '../safety/approval-manager.ts'
+import type { TaskExecutor } from '../brain/task-executor.ts'
+import type { DiaryGenerator } from '../memory/diary.ts'
+import type { WorkingMemory } from '../memory/working.ts'
+import type { QuotaSensor } from '../sensors/quota.ts'
+import type { OneBotGateway } from '../gateway/onebot-gateway.ts'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const UI_DIR = path.join(__dirname, 'ui')
+
+export interface ConsoleServerExtras {
+  memory?: MemoryStore
+  impression?: HostImpressionEngine
+  contactImpression?: ContactImpressionEngine
+  permissionGuard?: PermissionGuard
+  approvalManager?: ApprovalManager
+  taskExecutor?: TaskExecutor
+  diaryGenerator?: DiaryGenerator
+  workingMemory?: WorkingMemory
+  quotaSensor?: QuotaSensor
+  onebotGateway?: OneBotGateway
+  onResolveApproval?: (
+    req: ApprovalRequest,
+    action: 'approve' | 'reject'
+  ) => Promise<{ executed: boolean; detailReport?: string; spokenReply?: string; rejected?: boolean; error?: string }>
+}
 
 export class ConsoleServer extends EventEmitter {
   private server: any = null
@@ -16,25 +47,30 @@ export class ConsoleServer extends EventEmitter {
   private state: StateManager
   private scheduler: RuntimeScheduler
   private brain?: any
+  private extras: ConsoleServerExtras
 
   constructor(
     port: number = 7788,
     state: StateManager,
     scheduler: RuntimeScheduler,
-    brain?: any
+    brain?: any,
+    extras: ConsoleServerExtras = {}
   ) {
     super()
     this.port = port
     this.state = state
     this.scheduler = scheduler
     this.brain = brain
+    this.extras = extras
   }
 
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.server = createServer((req: IncomingMessage, res: ServerResponse) => {
         this.handleRequest(req, res).catch((err) => {
-          res.writeHead(500, { 'Content-Type': 'application/json' })
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' })
+          }
           res.end(JSON.stringify({ error: err.message }))
         })
       })
@@ -51,6 +87,11 @@ export class ConsoleServer extends EventEmitter {
   stop(): Promise<void> {
     return new Promise((resolve) => {
       if (!this.server) return resolve()
+      if (typeof this.server.closeAllConnections === 'function') {
+        try {
+          this.server.closeAllConnections()
+        } catch {}
+      }
       this.server.close(() => resolve())
     })
   }
@@ -69,11 +110,29 @@ export class ConsoleServer extends EventEmitter {
       return
     }
 
-    // 1. 首页控制台 HTML 界面
-    if (req.method === 'GET' && url.pathname === '/') {
+    // 1. 首页控制台 HTML 界面与解耦静态资源路由
+    if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
       res.end(this.renderHtml())
       return
+    }
+
+    if (req.method === 'GET' && url.pathname === '/ui/styles.css') {
+      const cssPath = path.join(UI_DIR, 'styles.css')
+      if (fs.existsSync(cssPath)) {
+        res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8' })
+        res.end(fs.readFileSync(cssPath, 'utf-8'))
+        return
+      }
+    }
+
+    if (req.method === 'GET' && url.pathname === '/ui/app.js') {
+      const jsPath = path.join(UI_DIR, 'app.js')
+      if (fs.existsSync(jsPath)) {
+        res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8' })
+        res.end(fs.readFileSync(jsPath, 'utf-8'))
+        return
+      }
     }
 
     // 2. 状态查询 API
@@ -107,10 +166,10 @@ export class ConsoleServer extends EventEmitter {
       return
     }
 
-    // 5. 模式切换 API
+    // 5. 模式切换 API (支持 companion 陪伴模式 / work 工作模式 / live 直播模式)
     if (req.method === 'POST' && url.pathname === '/api/mode') {
       const body = await this.readJsonBody(req)
-      const mode = body.mode === 'live' ? 'live' : 'companion'
+      const mode = body.mode === 'live' ? 'live' : body.mode === 'work' ? 'work' : 'companion'
       this.state.setMode(mode)
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ success: true, mode: this.state.getMode() }))
@@ -123,10 +182,216 @@ export class ConsoleServer extends EventEmitter {
         hunger: Math.min(100, this.state.getStats().hunger + 15),
         mood: Math.min(100, this.state.getStats().mood + 5),
       })
+      if (this.extras.impression) {
+        const p = this.extras.impression.getProfile()
+        p.bondScore += 3
+        this.extras.impression.saveProfile(p)
+      }
       await this.scheduler.playClip({ clip: 'eat_token', maxMs: 3500 })
       await this.scheduler.speakText({ text: '嗷呜！投喂的小鱼干真香！饱食度增加啦~', typewriter: true })
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ success: true, stats: this.state.getStats() }))
+      return
+    }
+
+    // 6.1 灵动动作与复合神态执行演练 API
+    if (req.method === 'POST' && url.pathname === '/api/action/play') {
+      const body = await this.readJsonBody(req)
+      const clip = String(body.clip || 'idle').trim()
+      const customSpeech = typeof body.speech === 'string' ? body.speech.trim() : ''
+
+      const macro = this.scheduler.motionEngine?.getMacro(clip)
+      const speech = customSpeech || macro?.defaultSpeech || ''
+
+      if (speech) {
+        await this.scheduler.speakText({ text: speech, typewriter: true })
+      }
+      this.scheduler.play(clip, { maxMs: 5000, resumeState: 'IDLE' })
+
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ success: true, clip, speech }))
+      return
+    }
+
+    // 6.2 QQ (OneBot v11 / NapCatQQ) 网关状态查询与热配置 API（含唯一主人 ownerQq 绑定）
+    if (url.pathname === '/api/config/onebot') {
+      const gw = this.extras.onebotGateway
+      const pg = this.extras.permissionGuard
+      if (req.method === 'GET') {
+        const status = gw ? gw.getStatus() : { enabled: false, connected: false, ownerQq: pg?.getOwnerQq() || '' }
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ success: true, ...status }))
+        return
+      }
+      if (req.method === 'POST') {
+        const body = await this.readJsonBody(req)
+        if (body.ownerQq !== undefined && pg) {
+          pg.setOwnerQq(String(body.ownerQq).trim())
+        }
+        if (gw) {
+          gw.updateConfig(body)
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(
+          JSON.stringify({
+            success: true,
+            message: 'QQ OneBot 配置与主人权限账号已更新并尝试重新连接！',
+            ...(gw?.getStatus() || { ownerQq: pg?.getOwnerQq() || '' }),
+          })
+        )
+        return
+      }
+    }
+
+    // 6.3 QQ OneBot 手动触发重连 API
+    if (req.method === 'POST' && url.pathname === '/api/onebot/reconnect') {
+      const gw = this.extras.onebotGateway
+      if (gw) {
+        gw.connect()
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ success: true, message: '已触发 QQ 网关重连！', ...(gw?.getStatus() || {}) }))
+      return
+    }
+
+    // 6.4 QQ 消息主动测试推送 API
+    if (req.method === 'POST' && url.pathname === '/api/onebot/send-test') {
+      const body = await this.readJsonBody(req)
+      const gw = this.extras.onebotGateway
+      if (!gw) {
+        res.writeHead(503, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ success: false, error: 'OneBot 网关未挂载' }))
+        return
+      }
+      const status = gw.getStatus()
+      const targetQq = String(body.targetQq || status.ownerQq || status.botQq || '').trim()
+      if (!targetQq) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ success: false, error: '请先绑定主人 QQ 号或提供接收测试消息的 QQ 号' }))
+        return
+      }
+      const testText =
+        '老爸！大肥鱼从桌面上穿越到 QQ 找你啦~ ✨\nQQ WebSocket 直连网关与权限中心已经跑通，以后在私聊或群聊里 @大肥鱼，我都会秒回你并守护你的电脑安全哦！🐟'
+      const sendRes = await gw.sendPrivateMsg(targetQq, testText)
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ success: true, targetQq, result: sendRes }))
+      return
+    }
+
+    // 6.5 多联系人印象墙查询与编辑 API (Milestone M1 & M3)
+    if (req.method === 'GET' && url.pathname === '/api/contacts') {
+      const search = url.searchParams.get('search') || undefined
+      const role = (url.searchParams.get('role') as any) || undefined
+      const ci = this.extras.contactImpression
+      const ownerQq = this.extras.onebotGateway?.getOwnerQq() || this.extras.permissionGuard?.getOwnerQq() || ''
+      const profiles = ci ? ci.listProfiles({ search, role, limit: 100 }) : []
+      const enriched = profiles.map((p) => ({
+        ...p,
+        facts: ci ? ci.getContactFacts(p.uid).slice(0, 8) : [],
+      }))
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ success: true, ownerQq, contacts: enriched }))
+      return
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/contacts/update') {
+      const body = await this.readJsonBody(req)
+      const ci = this.extras.contactImpression
+      if (!ci) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ success: false, error: 'ContactImpressionEngine not initialized' }))
+        return
+      }
+      const uid = String(body.uid || body.externalId || '').trim()
+      if (!uid) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ success: false, error: 'uid is required' }))
+        return
+      }
+      const updated = ci.updateProfile(uid, {
+        preferredTitle: body.preferredTitle,
+        role: body.role,
+        affinity: body.affinity !== undefined ? Number(body.affinity) : undefined,
+        impressionTags: Array.isArray(body.impressionTags) ? body.impressionTags : undefined,
+      })
+      if (!updated) {
+        res.writeHead(404, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ success: false, error: 'Contact not found' }))
+        return
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ success: true, profile: updated }))
+      return
+    }
+
+    // 6.6 L1 危险操作实时审批队列查询与决议 API (Milestone M2 & M3)
+    if (
+      req.method === 'GET' &&
+      (url.pathname === '/api/approvals' || url.pathname === '/api/security/approvals')
+    ) {
+      const am = this.extras.approvalManager
+      const ownerQq = this.extras.onebotGateway?.getOwnerQq() || this.extras.permissionGuard?.getOwnerQq() || ''
+      const pending = am ? am.listPendingRequests() : []
+      const history = am ? am.listRecentHistory(30) : []
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(
+        JSON.stringify({
+          success: true,
+          ownerQq,
+          pendingCount: pending.length,
+          pending,
+          history,
+        })
+      )
+      return
+    }
+
+    if (
+      req.method === 'POST' &&
+      (url.pathname === '/api/approvals/resolve' || url.pathname === '/api/security/approvals/decide')
+    ) {
+      const body = await this.readJsonBody(req)
+      const am = this.extras.approvalManager
+      if (!am) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ success: false, error: 'ApprovalManager not initialized' }))
+        return
+      }
+      const codeOrId = String(body.code || body.id || '').trim()
+      const rawAction = String(body.action || body.decision || 'approve').toLowerCase()
+      const action: 'approve' | 'reject' = rawAction === 'reject' ? 'reject' : 'approve'
+
+      const resolveRes = am.resolveRequest(codeOrId, action, 'owner:console')
+      if (!resolveRes.success || !resolveRes.request) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(
+          JSON.stringify({
+            success: false,
+            error: resolveRes.error || resolveRes.message || '审批单不存在或已失效',
+          })
+        )
+        return
+      }
+
+      let executionResult: any = null
+      if (this.extras.onResolveApproval) {
+        try {
+          executionResult = await this.extras.onResolveApproval(resolveRes.request, action)
+        } catch (err: any) {
+          executionResult = { executed: false, error: err?.message }
+        }
+      }
+      this.emit('approval_resolved_console', { request: resolveRes.request, action, executionResult })
+
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(
+        JSON.stringify({
+          success: true,
+          message: resolveRes.message,
+          request: resolveRes.request,
+          executionResult,
+        })
+      )
       return
     }
 
@@ -139,7 +404,7 @@ export class ConsoleServer extends EventEmitter {
       return
     }
 
-    // 8. 爸爸专属聊天 API (与女儿直接对话，触发大脑思考并保留私密记忆)
+    // 8. 爸爸专属聊天与任务下达 API (与女儿直接对话，触发大脑思考/电脑操控并加固印象记忆)
     if (req.method === 'POST' && url.pathname === '/api/chat') {
       const body = await this.readJsonBody(req)
       const message = String(body.message || '').trim()
@@ -156,11 +421,12 @@ export class ConsoleServer extends EventEmitter {
           res.writeHead(504, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: 'Daughter thinking timeout' }))
         }
-      }, 15000)
+      }, 60000)
 
       this.emit('chat_message', {
         text: message,
-        respond: (reply: { text: string; clip: string; tone: string }) => {
+        forceWorkMode: Boolean(body.forceWorkMode) || this.state.getMode() === 'work',
+        respond: (reply: any) => {
           if (!responded) {
             responded = true
             clearTimeout(timeout)
@@ -172,15 +438,61 @@ export class ConsoleServer extends EventEmitter {
       return
     }
 
-    // 9. 大脑与 CLI 诊断状态查询 API
+    // 9. 大脑与 CLI 诊断状态查询 API（含 Google AI Pro 额度与 DeepSeek 余额）
     if (req.method === 'GET' && url.pathname === '/api/brain/status') {
       const status = typeof this.brain?.getAllStatus === 'function' ? this.brain.getAllStatus() : { providers: [] }
+      const quota = this.extras.quotaSensor ? this.extras.quotaSensor.getReport() : null
       res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify(status))
+      res.end(JSON.stringify({ ...status, quota }))
       return
     }
 
-    // 10. DeepSeek API Key 在线热配置 API
+    // 9.1 实时查询或强制刷新 Google AI Pro + DeepSeek 额度 API
+    if ((req.method === 'GET' || req.method === 'POST') && url.pathname === '/api/brain/quota') {
+      const force = req.method === 'POST'
+      const report = this.extras.quotaSensor
+        ? await this.extras.quotaSensor.refreshAll(force)
+        : null
+      if (report) {
+        this.state.updateStats({ hunger: report.satietyPct })
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ success: true, quota: report, stats: this.state.getStats() }))
+      return
+    }
+
+    // 9.2 一键识别本地 CLI 工具并刷新额度 API
+    if (req.method === 'POST' && url.pathname === '/api/brain/detect-cli') {
+      const detected = typeof this.brain?.detectAllClis === 'function' ? this.brain.detectAllClis() : []
+      const quota = this.extras.quotaSensor ? await this.extras.quotaSensor.refreshAll(true) : null
+      if (quota) {
+        this.state.updateStats({ hunger: quota.satietyPct })
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ success: true, detected, quota }))
+      return
+    }
+
+    // 9.3 主动测试指定大脑通道连通性 API (agy / cursor / deepseek_sse / local_llm)
+    if (req.method === 'POST' && url.pathname === '/api/brain/test') {
+      const body = await this.readJsonBody(req)
+      const providerId = String(body.providerId || 'deepseek_sse').trim()
+      const testRes =
+        typeof this.brain?.testProviderConnectivity === 'function'
+          ? await this.brain.testProviderConnectivity(providerId)
+          : { ok: false, latencyMs: 0, error: 'Router not available' }
+
+      if (this.extras.quotaSensor) {
+        const report = this.extras.quotaSensor.getReport()
+        this.state.updateStats({ hunger: report.satietyPct })
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ success: true, providerId, ...testRes }))
+      return
+    }
+
+    // 10. DeepSeek API Key 在线热配置与即时余额校验 API
     if (req.method === 'POST' && url.pathname === '/api/config/deepseek') {
       const body = await this.readJsonBody(req)
       const apiKey = String(body.apiKey || '').trim()
@@ -193,7 +505,24 @@ export class ConsoleServer extends EventEmitter {
         p.setApiKey(apiKey)
       }
 
-      // 持久化到 config/daughter.config.json
+      // 1. 持久化到不受 Git 覆盖的 runtime/data/secrets.json
+      try {
+        const secretsPath = path.resolve(process.cwd(), 'runtime/data/secrets.json')
+        fs.mkdirSync(path.dirname(secretsPath), { recursive: true })
+        let secrets: any = {}
+        if (fs.existsSync(secretsPath)) {
+          try {
+            secrets = JSON.parse(fs.readFileSync(secretsPath, 'utf-8'))
+          } catch {}
+        }
+        secrets.deepseekApiKey = apiKey
+        secrets.updatedAt = new Date().toISOString()
+        fs.writeFileSync(secretsPath, JSON.stringify(secrets, null, 2), 'utf-8')
+      } catch (err) {
+        console.warn('[dsh-dafeiyu] 写入 secrets.json 失败:', err)
+      }
+
+      // 2. 同步更新 config/daughter.config.json
       try {
         const cfgPath = path.resolve(process.cwd(), 'config/daughter.config.json')
         if (fs.existsSync(cfgPath)) {
@@ -207,8 +536,142 @@ export class ConsoleServer extends EventEmitter {
         console.warn('[dsh-dafeiyu] 持久化 DeepSeek Key 失败:', err)
       }
 
+      // 3. 立即查询一次 DeepSeek 真实账户余额并同步饱食度 (非阻塞快速响应，最多等待 3000ms 窗口)
+      let balance = null
+      try {
+        const fetchPromise = this.extras.quotaSensor
+          ? this.extras.quotaSensor.refreshDeepSeekBalance(true)
+          : p && typeof p.fetchAccountBalance === 'function'
+          ? p.fetchAccountBalance(true)
+          : null
+
+        if (fetchPromise) {
+          balance = await Promise.race([
+            fetchPromise,
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+          ]).catch(() => null)
+        }
+      } catch (err) {
+        console.warn('[dsh-dafeiyu] 快速查询余额异常:', err)
+      }
+
+      if (this.extras.quotaSensor) {
+        const report = this.extras.quotaSensor.getReport()
+        this.state.updateStats({ hunger: report.satietyPct })
+      }
+
+      const masked = p && typeof p.getMaskedApiKey === 'function' ? p.getMaskedApiKey() : ''
+      const msg =
+        balance && balance.status === 'ready'
+          ? `DeepSeek 密钥已生效！当前账户余额: ${balance.summary}`
+          : balance && balance.error
+          ? `密钥已成功保存至密盒，但当前余额校验提示: ${balance.error}`
+          : 'DeepSeek 密钥已安全保存至密盒，并在后台持续探测账户余额与连通性！'
+
       res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ success: true, message: 'DeepSeek API Key 已更新' }))
+      res.end(JSON.stringify({ success: true, maskedApiKey: masked, balance, message: msg }))
+      return
+    }
+
+    // 11. 记忆、主人印象档案与已进化技能查询 API
+    if (req.method === 'GET' && url.pathname === '/api/memories') {
+      const rawMode = this.state.getMode()
+      const memMode = rawMode === 'live' ? 'live' : 'companion'
+      const profile = this.extras.impression?.getProfile() || null
+      const facts = this.extras.memory?.queryFacts('host', memMode) || []
+      const episodes = this.extras.memory?.queryEpisodes({ mode: memMode, limit: 12 }) || []
+      const skills = this.extras.impression?.getLearnedSkills() || []
+      const sessionSummary = rawMode === 'live' ? '' : this.extras.memory?.loadSessionSummary() || ''
+      const recentDialogues = rawMode === 'live' ? [] : this.extras.workingMemory?.getRecentDialogues() || []
+
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(
+        JSON.stringify({
+          mode: rawMode,
+          profile,
+          facts,
+          episodes,
+          skills,
+          sessionSummary,
+          recentDialogues,
+        })
+      )
+      return
+    }
+
+    // 12. 主动传授新事实或新技能 API (加固印象与技能学习)
+    if (req.method === 'POST' && url.pathname === '/api/memories/teach') {
+      const body = await this.readJsonBody(req)
+      const type = body.type || 'fact'
+
+      if (type === 'skill' && this.extras.impression) {
+        const triggerPhrase = String(body.triggerPhrase || '').trim()
+        const actionTemplate = String(body.actionTemplate || '').trim()
+        const name = String(body.name || `专属口令: ${triggerPhrase}`).trim()
+        const category = body.category || 'workflow'
+        if (!triggerPhrase || !actionTemplate) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'triggerPhrase and actionTemplate are required' }))
+          return
+        }
+        const skill = this.extras.impression.learnOrUpgradeSkill({
+          name,
+          triggerPhrase,
+          category,
+          description: `当老爸说“${triggerPhrase}”时，执行：${actionTemplate}`,
+          actionTemplate,
+        })
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ success: true, skill }))
+        return
+      }
+
+      if (this.extras.impression) {
+        const predicate = String(body.predicate || '主人偏好').trim()
+        const object = String(body.object || '').trim()
+        if (!object) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'object cannot be empty' }))
+          return
+        }
+        const r = this.extras.impression.reinforceFact({
+          category: 'manual_taught',
+          predicate,
+          object,
+          baseConfidence: 0.95,
+        })
+        const p = this.extras.impression.getProfile()
+        p.bondScore += 4
+        this.extras.impression.saveProfile(p)
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ success: true, factId: r.id, confidence: r.confidence }))
+        return
+      }
+
+      res.writeHead(400, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'Impression engine not initialized' }))
+      return
+    }
+
+    // 13. 触发每日日记复盘与记忆进化 API
+    if (req.method === 'POST' && url.pathname === '/api/evolve') {
+      const mode = this.state.getMode()
+      if (this.extras.diaryGenerator) {
+        const diary =
+          mode === 'live'
+            ? await this.extras.diaryGenerator.generateLiveDiary()
+            : await this.extras.diaryGenerator.generateDiary()
+        await this.scheduler.playClip({ clip: 'success', maxMs: 3200 })
+        await this.scheduler.speakText({
+          text: '哼，今天的记忆和技能本鱼都复盘整理进日记本啦！又变聪明了一点点~',
+          typewriter: true,
+        })
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ success: true, diary }))
+        return
+      }
+      res.writeHead(400, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'Diary generator not initialized' }))
       return
     }
 
@@ -231,374 +694,10 @@ export class ConsoleServer extends EventEmitter {
   }
 
   private renderHtml(): string {
-    return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <title>🐋 CyberFish 大肥鱼桌面伴侣终端</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    :root {
-      --bg: #0f1117;
-      --card-bg: #1a1d27;
-      --border: #2a2e3d;
-      --text: #e6e8ee;
-      --accent: #3b82f6;
-      --danger: #ef4444;
-      --success: #10b981;
-      --warning: #f59e0b;
+    const htmlPath = path.join(UI_DIR, 'index.html')
+    if (fs.existsSync(htmlPath)) {
+      return fs.readFileSync(htmlPath, 'utf-8')
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      padding: 24px;
-      line-height: 1.5;
-    }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 24px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--border);
-    }
-    .header h1 { font-size: 20px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-    .badge {
-      display: inline-block;
-      padding: 4px 10px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: bold;
-      background: #2563eb33;
-      color: #60a5fa;
-      border: 1px solid #3b82f644;
-    }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
-    .card {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 16px;
-    }
-    .card h2 { font-size: 15px; margin-bottom: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }
-    .btn {
-      cursor: pointer;
-      padding: 10px 16px;
-      border-radius: 8px;
-      border: none;
-      font-weight: 600;
-      font-size: 14px;
-      transition: all 0.2s;
-    }
-    .btn-danger { background: var(--danger); color: #fff; width: 100%; margin-bottom: 12px; }
-    .btn-danger:hover { background: #dc2626; }
-    .btn-primary { background: var(--accent); color: #fff; }
-    .btn-primary:hover { background: #2563eb; }
-    .input-box {
-      width: 100%;
-      background: #090a0f;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 10px;
-      color: #fff;
-      font-size: 14px;
-      margin-bottom: 10px;
-    }
-    .stats-bar { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px; }
-    .progress { height: 8px; border-radius: 4px; background: #242938; overflow: hidden; margin-bottom: 12px; }
-    .progress-fill { height: 100%; transition: width 0.3s; }
-    .chat-container {
-      height: 220px;
-      overflow-y: auto;
-      background: #090a0f;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px;
-      margin-bottom: 10px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-    .chat-msg {
-      max-width: 85%;
-      padding: 8px 12px;
-      border-radius: 8px;
-      font-size: 13px;
-      line-height: 1.4;
-    }
-    .chat-msg.user {
-      align-self: flex-end;
-      background: #1e3a8a;
-      color: #bfdbfe;
-    }
-    .chat-msg.daughter {
-      align-self: flex-start;
-      background: #242938;
-      color: #e2e8f0;
-      border: 1px solid #334155;
-    }
-    .chat-meta {
-      font-size: 10px;
-      color: #94a3b8;
-      margin-bottom: 2px;
-    }
-    .provider-list {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .provider-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 8px 12px;
-      border-radius: 6px;
-      background: #090a0f;
-      border: 1px solid var(--border);
-      font-size: 13px;
-    }
-    .tag {
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 11px;
-      font-weight: bold;
-    }
-    .tag-ready { background: #065f46; color: #a7f3d0; }
-    .tag-busy { background: #854d0e; color: #fde047; }
-    .tag-disabled { background: #374151; color: #9ca3af; }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <h1>🐋 大肥鱼桌面伴侣终端</h1>
-    <span class="badge" id="modeBadge">陪伴模式</span>
-  </div>
-
-  <div class="grid">
-    <!-- 伴侣即时对话 -->
-    <div class="card" style="grid-column: 1 / -1;">
-      <h2>💬 伴侣即时对话 (驱动桌面动作与拟人语音)</h2>
-      <div class="chat-container" id="chatLogs">
-        <div class="chat-msg daughter">
-          <div class="chat-meta">🐋 大肥鱼</div>
-          你来啦！今天在 Antigravity 和 Cursor 里写什么好玩的代码呢？快跟我讲讲~
-        </div>
-      </div>
-      <div style="display: flex; gap: 8px;">
-        <input type="text" id="chatInput" class="input-box" style="margin-bottom: 0;" placeholder="输入对话内容... (按 Enter 发送)" onkeydown="if(event.key==='Enter') sendChat()" />
-        <button class="btn btn-primary" style="white-space: nowrap;" id="sendBtn" onclick="sendChat()">发送</button>
-      </div>
-    </div>
-
-    <!-- 急停与风控 -->
-    <div class="card">
-      <h2>🚨 紧急安全风控</h2>
-      <button class="btn btn-danger" onclick="emergencyStop()">⚡ 一键紧急停嘴 (清空全部队列)</button>
-      <div style="display: flex; gap: 8px;">
-        <button class="btn btn-primary" style="flex: 1;" onclick="toggleMode('companion')">切换为陪伴模式</button>
-        <button class="btn btn-primary" style="flex: 1; background: var(--warning);" onclick="toggleMode('live')">切换为直播模式</button>
-      </div>
-    </div>
-
-    <!-- 状态监控 -->
-    <div class="card">
-      <h2>📊 伴侣当前身体状态</h2>
-      <div class="stats-bar"><span>🍙 饱食度</span><span id="hungerVal">--%</span></div>
-      <div class="progress"><div class="progress-fill" id="hungerFill" style="background: #f59e0b; width: 0%;"></div></div>
-
-      <div class="stats-bar"><span>❤️ 心情值</span><span id="moodVal">--</span></div>
-      <div class="progress"><div class="progress-fill" id="moodFill" style="background: #ec4899; width: 0%;"></div></div>
-
-      <div class="stats-bar"><span>⚡ 精力值</span><span id="energyVal">--%</span></div>
-      <div class="progress"><div class="progress-fill" id="energyFill" style="background: #3b82f6; width: 0%;"></div></div>
-
-      <button class="btn btn-primary" style="width: 100%;" onclick="feed()">🐟 给大肥鱼喂小鱼干 (+15)</button>
-    </div>
-
-    <!-- 代她说 (人工插话) -->
-    <div class="card">
-      <h2>🗣️ 人工代发言 (快捷插话)</h2>
-      <input type="text" id="sayInput" class="input-box" placeholder="输入要代大肥鱼说的话..." />
-      <div style="display: flex; gap: 8px;">
-        <button class="btn btn-primary" style="flex: 1;" onclick="hostSay('success')">欢呼说出</button>
-        <button class="btn btn-primary" style="flex: 1; background: #64748b;" onclick="hostSay('idle')">平常说出</button>
-      </div>
-    </div>
-
-    <!-- 思考大脑与 CLI 实时诊断 -->
-    <div class="card" style="grid-column: 1 / -1;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-        <h2>🧠 阶梯思考大脑与 CLI 实时状态</h2>
-        <span class="badge" id="activeTierBadge">当前生效: Tier 1</span>
-      </div>
-      <div class="provider-list" id="providerList">
-        <div style="font-size: 13px; color: #94a3b8;">正在探测本地 CLI 与 API 连通性...</div>
-      </div>
-    </div>
-
-    <!-- DeepSeek API Key 在线配置 -->
-    <div class="card" style="grid-column: 1 / -1;">
-      <h2>⚙️ DeepSeek API 密钥在线配置 (热生效)</h2>
-      <div style="display: flex; gap: 8px; align-items: center;">
-        <input type="password" id="deepseekKeyInput" class="input-box" style="margin-bottom: 0;" placeholder="sk-********************************" />
-        <button class="btn btn-primary" style="white-space: nowrap;" onclick="saveDeepSeekKey()">保存并立即生效</button>
-      </div>
-      <div style="font-size: 11px; color: #94a3b8; margin-top: 6px;" id="keyHintText">
-        当前状态: 正在读取密钥...
-      </div>
-    </div>
-  </div>
-
-  <script>
-    async function refreshStatus() {
-      try {
-        const res = await fetch('/api/status')
-        const data = await res.json()
-        document.getElementById('modeBadge').innerText = data.mode === 'live' ? '🔴 直播中' : '🟢 陪伴中'
-        document.getElementById('hungerVal').innerText = data.stats.hunger + '%'
-        document.getElementById('hungerFill').style.width = data.stats.hunger + '%'
-        document.getElementById('moodVal').innerText = data.stats.mood + ' (' + data.emotion + ')'
-        document.getElementById('moodFill').style.width = data.stats.mood + '%'
-        document.getElementById('energyVal').innerText = data.stats.energy + '%'
-        document.getElementById('energyFill').style.width = data.stats.energy + '%'
-      } catch (e) {}
-    }
-
-    async function emergencyStop() {
-      await fetch('/api/emergency-stop', { method: 'POST' })
-      alert('已触发急停！')
-      refreshStatus()
-    }
-
-    async function toggleMode(mode) {
-      await fetch('/api/mode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }) })
-      refreshStatus()
-    }
-
-    async function feed() {
-      await fetch('/api/feed', { method: 'POST' })
-      refreshStatus()
-    }
-
-    async function hostSay(clip) {
-      const text = document.getElementById('sayInput').value
-      if (!text) return
-      await fetch('/api/say', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, clip }) })
-      document.getElementById('sayInput').value = ''
-      refreshStatus()
-    }
-
-    async function sendChat() {
-      const input = document.getElementById('chatInput')
-      const text = input.value.trim()
-      if (!text) return
-      input.value = ''
-
-      const logs = document.getElementById('chatLogs')
-      const userMsg = document.createElement('div')
-      userMsg.className = 'chat-msg user'
-      userMsg.innerHTML = '<div class="chat-meta">👨‍💻 我</div>' + escapeHtml(text)
-      logs.appendChild(userMsg)
-      logs.scrollTop = logs.scrollHeight
-
-      const daughterMsg = document.createElement('div')
-      daughterMsg.className = 'chat-msg daughter'
-      daughterMsg.innerHTML = '<div class="chat-meta">🐋 大肥鱼</div><i>思考中...</i>'
-      logs.appendChild(daughterMsg)
-      logs.scrollTop = logs.scrollHeight
-
-      try {
-        const res = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text })
-        })
-        const data = await res.json()
-        if (data.reply) {
-          daughterMsg.innerHTML = '<div class="chat-meta">🐋 大肥鱼 (' + (data.reply.clip || '开心') + ')</div>' + escapeHtml(data.reply.text)
-        } else {
-          daughterMsg.innerHTML = '<div class="chat-meta">🐋 大肥鱼</div>(哼，本鱼暂时不想理你或者走神啦)'
-        }
-      } catch (err) {
-        daughterMsg.innerHTML = '<div class="chat-meta">🐋 大肥鱼</div>(脑瓜短路了，请检查网络或模型配置)'
-      }
-      logs.scrollTop = logs.scrollHeight
-      refreshStatus()
-    }
-
-    async function refreshBrainStatus() {
-      try {
-        const res = await fetch('/api/brain/status')
-        const data = await res.json()
-        const list = document.getElementById('providerList')
-        const badge = document.getElementById('activeTierBadge')
-        if (badge) {
-          badge.innerText = '当前首选生效: Tier ' + data.activeTier
-        }
-        if (list && Array.isArray(data.providers)) {
-          let html = ''
-          for (const p of data.providers) {
-            const isReady = p.available && p.state === 'READY'
-            const tagClass = isReady ? 'tag-ready' : (p.state === 'EXHAUSTED' || p.state === 'CIRCUIT_BROKEN' ? 'tag-busy' : 'tag-disabled')
-            const tagLabel = isReady ? '就绪' : (p.state === 'EXHAUSTED' ? '额度超限冷却' : (p.state === 'DISABLED' ? '未配置' : p.state || '离线'))
-            
-            let extra = ''
-            if (p.binPath) extra = ' · ' + p.binPath
-            else if (p.maskedApiKey) extra = ' · 密钥已就绪 (' + p.maskedApiKey + ')'
-            else if (p.todayCostCny !== undefined) extra = ' · 今日消耗: ¥' + p.todayCostCny
-            
-            html += '<div class="provider-row">'
-            html += '<div><strong>Tier ' + p.tier + ': ' + escapeHtml(p.name || p.id) + '</strong>'
-            html += '<span style="font-size: 11px; color: #64748b; margin-left: 8px;">' + escapeHtml(extra) + '</span></div>'
-            html += '<span class="tag ' + tagClass + '">' + tagLabel + '</span>'
-            html += '</div>'
-
-            if (p.tier === 2 && p.maskedApiKey) {
-              const hint = document.getElementById('keyHintText')
-              if (hint) {
-                hint.innerText = '当前配置密钥: ' + p.maskedApiKey + ' (今日已用: ¥' + (p.todayCostCny || 0) + ' / 限额 ¥' + (p.dailyBudgetCny || 5) + ')'
-              }
-            }
-          }
-          list.innerHTML = html
-        }
-      } catch (e) {}
-    }
-
-    async function saveDeepSeekKey() {
-      const input = document.getElementById('deepseekKeyInput')
-      const key = input.value.trim()
-      if (!key) {
-        alert('请输入有效的 DeepSeek API Key (以 sk- 开头)')
-        return
-      }
-      try {
-        const res = await fetch('/api/config/deepseek', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ apiKey: key })
-        })
-        const data = await res.json()
-        alert(data.message || '配置已生效')
-        input.value = ''
-        refreshBrainStatus()
-      } catch (e) {
-        alert('保存失败: ' + e.message)
-      }
-    }
-
-    function escapeHtml(str) {
-      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    }
-
-    setInterval(refreshStatus, 2000)
-    setInterval(refreshBrainStatus, 3000)
-    refreshStatus()
-    refreshBrainStatus()
-  </script>
-</body>
-</html>`
+    return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>CyberFish Console</title></head><body>UI assets missing</body></html>'
   }
 }
