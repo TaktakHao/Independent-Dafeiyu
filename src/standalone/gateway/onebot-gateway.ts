@@ -21,6 +21,11 @@ export interface OneBotConfig {
   ownerQq?: string // 👑 唯一绑定主人 QQ 号
 }
 
+export interface OneBotReplyOptions {
+  /** 群聊回复时是否跳过 @发送者（例如发送独立表情包或连发第 2~3 条短句气泡时） */
+  skipAt?: boolean
+}
+
 export interface OneBotUserMessageEvent {
   source: 'qq_private' | 'qq_group'
   userId: string
@@ -28,7 +33,7 @@ export interface OneBotUserMessageEvent {
   nickname: string
   text: string
   rawMessage: string
-  reply: (replyText: string, clip?: string) => Promise<void>
+  reply: (replyText: string, clip?: string, options?: OneBotReplyOptions) => Promise<void>
 }
 
 export class OneBotGateway extends EventEmitter {
@@ -225,7 +230,7 @@ export class OneBotGateway extends EventEmitter {
           nickname: senderNick,
           text: cleanText,
           rawMessage: rawText,
-          reply: async (replyText: string, _clip?: string) => {
+          reply: async (replyText: string, _clip?: string, _options?: OneBotReplyOptions) => {
             await this.sendPrivateMsg(payload.user_id, replyText, tempGroupId)
           },
         } as OneBotUserMessageEvent)
@@ -264,9 +269,11 @@ export class OneBotGateway extends EventEmitter {
             nickname: senderNick,
             text: cleanText,
             rawMessage: rawText,
-            reply: async (replyText: string, _clip?: string) => {
-              // 群内回复，自动带上 @ 发起者
-              const fullReply = `[CQ:at,qq=${senderId}] ${replyText}`
+            reply: async (replyText: string, _clip?: string, options?: OneBotReplyOptions) => {
+              // 纯图片表情包或连发后续气泡 (skipAt) 不带 @ 前缀，像真人一样自然发图与接话
+              const isPureImage = /^(\s*\[CQ:image,[^\]]+\]\s*)+$/i.test(replyText)
+              const shouldAt = !options?.skipAt && !isPureImage
+              const fullReply = shouldAt ? `[CQ:at,qq=${senderId}] ${replyText}` : replyText
               await this.sendGroupMsg(payload.group_id, fullReply)
             },
           } as OneBotUserMessageEvent)
@@ -276,10 +283,17 @@ export class OneBotGateway extends EventEmitter {
   }
 
   /**
-   * 剥离 CQ 码与多余格式
+   * 剥离 CQ 码与多余格式；若对方发来纯表情包/QQ表情，保留语义提示以便大肥鱼斗图互动
    */
   private cleanCqCode(text: string): string {
-    return text.replace(/\[CQ:[^\]]+\]/g, '').trim()
+    const hasImage = /\[CQ:image,[^\]]+\]/i.test(text)
+    const hasFace = /\[CQ:face,[^\]]+\]/i.test(text)
+    const stripped = text.replace(/\[CQ:[^\]]+\]/g, '').trim()
+    if (!stripped) {
+      if (hasImage) return '[发来了一张表情包]'
+      if (hasFace) return '[发了一个QQ小表情]'
+    }
+    return stripped
   }
 
   public sendAction(action: string, params: any = {}, callback?: (data: any) => void): void {

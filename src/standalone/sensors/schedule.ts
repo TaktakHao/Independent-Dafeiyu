@@ -41,27 +41,35 @@ export class ScheduleClock extends EventEmitter {
       this.triggeredMeals.clear()
     }
 
+    // 0. 早安看家晨报 08:45 - 09:30
+    if ((hours === 8 && minutes >= 45) || (hours === 9 && minutes < 30)) {
+      if (!this.triggeredMeals.has('morning')) {
+        this.triggeredMeals.add('morning')
+        this.emitEvent('SCHEDULE', '老爸早安！新的一天元气满满，本鱼已经巡检完家里电脑啦~', 'morning')
+      }
+    }
+
     // 1. 午餐饭点 12:00 - 12:30
     if (hours === 12 && minutes < 30 && !this.triggeredMeals.has('lunch')) {
       this.triggeredMeals.add('lunch')
-      this.emitEvent('SCHEDULE', '午饭时间到啦！本鱼肚子已经咕咕叫啦，老爸今天吃什么好吃的呀？')
+      this.emitEvent('SCHEDULE', '午饭时间到啦！本鱼肚子已经咕咕叫啦，老爸今天吃什么好吃的呀？', 'lunch')
     }
 
     // 2. 晚餐饭点 18:00 - 18:30
     if (hours === 18 && minutes < 30 && !this.triggeredMeals.has('dinner')) {
       this.triggeredMeals.add('dinner')
-      this.emitEvent('SCHEDULE', '晚饭时间到！搬了一天砖，该奖励自己一份大餐犒劳一下啦~')
+      this.emitEvent('SCHEDULE', '晚饭时间到！搬了一天砖，该奖励自己一份大餐犒劳一下啦~', 'dinner')
     }
 
     // 3. 睡前 23:30 日记沉淀触发
     if (hours === 23 && minutes >= 30 && !this.triggeredMeals.has('bedtime')) {
       this.triggeredMeals.add('bedtime')
       this.emit('bedtime_diary_trigger', now)
-      this.emitEvent('SCHEDULE', '唔…已经到深夜啦，好困好困…大肥鱼要去梦里数小鱼干啦，Zzz…')
+      this.emitEvent('SCHEDULE', '唔…已经到深夜啦，好困好困…大肥鱼要去梦里数小鱼干啦，Zzz…', 'bedtime')
     }
   }
 
-  private emitEvent(kind: any, text: string): void {
+  private emitEvent(kind: any, text: string, scheduleType?: string): void {
     const event: StandardEvent = {
       id: `schedule-${Date.now()}`,
       ts: Date.now(),
@@ -69,6 +77,7 @@ export class ScheduleClock extends EventEmitter {
       kind,
       text,
       actor: { uid: 'system', nickname: '作息闹钟' },
+      meta: scheduleType ? { scheduleType } : undefined,
     }
     this.emit('event', event)
   }

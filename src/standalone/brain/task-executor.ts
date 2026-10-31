@@ -17,6 +17,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import type { TieredBrainRouter } from './router.ts'
 import type { HostImpressionEngine, LearnedSkill } from '../memory/impression.ts'
+import type { ReminderManager } from '../sensors/reminder-manager.ts'
 import {
   DockerConnector,
   OkxDogConnector,
@@ -45,6 +46,7 @@ export interface TaskExecutionResult {
   clip: string
   tone: string
   durationMs: number
+  screenshotBase64?: string
 }
 
 const APP_ALIAS_MAP: Record<string, string> = {
@@ -184,14 +186,17 @@ export interface QueryRequest {
 export class TaskExecutor extends EventEmitter {
   private brain?: TieredBrainRouter
   private impression?: HostImpressionEngine
+  private reminderManager?: ReminderManager
   private customAgyRunner?: (prompt: string, cwd: string) => Promise<string>
   private operator: OperatorOptions
   private okxDog: OkxDogConnector
   private docker: DockerConnector
+  private caffeinateProcess: childProcess.ChildProcess | null = null
 
   constructor(options: {
     brain?: TieredBrainRouter
     impression?: HostImpressionEngine
+    reminderManager?: ReminderManager
     customAgyRunner?: (prompt: string, cwd: string) => Promise<string>
     operator?: OperatorOptions
     okxDog?: OkxDogConnector
@@ -200,10 +205,15 @@ export class TaskExecutor extends EventEmitter {
     super()
     this.brain = options.brain
     this.impression = options.impression
+    this.reminderManager = options.reminderManager
     this.customAgyRunner = options.customAgyRunner
     this.operator = options.operator || {}
     this.okxDog = options.okxDog || new OkxDogConnector()
     this.docker = options.docker || new DockerConnector()
+  }
+
+  public setReminderManager(rm: ReminderManager): void {
+    this.reminderManager = rm
   }
 
   /**
@@ -410,7 +420,68 @@ export class TaskExecutor extends EventEmitter {
       }
     }
 
-    // 3.3 查看桌面/下载/当前目录文件
+    // 3.3 屏幕截图 / 远程眼睛 (抓拍家里 Mac 屏幕画面)
+    if (/(?:截个图|截图|看屏幕|看看屏幕|桌面现在啥样|发张电脑截图|屏幕截图|桌面截图)/i.test(text)) {
+      return {
+        isTask: true,
+        category: 'macos',
+        subAction: 'screenshot',
+        queryOrTarget: text,
+        ackText: '咔嚓！大肥鱼这就帮你抓拍一张家里 Mac 的屏幕画面~ 📸',
+        workingClip: 'working_command',
+      }
+    }
+
+    // 3.4 防休眠咖啡因控制
+    if (/(?:开启防休眠|保持唤醒|别让电脑休眠|不准休眠|别休眠|防休眠)/i.test(text) && !/(?:关闭|取消|停止|恢复)/i.test(text)) {
+      return {
+        isTask: true,
+        category: 'macos',
+        subAction: 'caffeinate_on',
+        queryOrTarget: text,
+        ackText: '好嘞！大肥鱼给老爸的 Mac 喂了防休眠咖啡因，保证 7×24 小时保持清醒~ ☕',
+        workingClip: 'working_command',
+      }
+    }
+    if (/(?:关闭防休眠|允许电脑休眠|取消防休眠|恢复休眠|停止防休眠)/i.test(text)) {
+      return {
+        isTask: true,
+        category: 'macos',
+        subAction: 'caffeinate_off',
+        queryOrTarget: text,
+        ackText: '收到，已解除防休眠限制，Mac 可以按系统设置正常休息啦~ 🌙',
+        workingClip: 'working_command',
+      }
+    }
+
+    // 3.5 高占用进程排查与卡顿诊断
+    if (/(?:电脑怎么这么卡|卡顿|排查卡顿|谁在占cpu|谁在占内存|进程占用|最占内存|最占cpu|查进程|有哪些进程)/i.test(text)) {
+      return {
+        isTask: true,
+        category: 'macos',
+        subAction: 'top_processes',
+        queryOrTarget: text,
+        ackText: '哼，让本鱼掏出放大镜，把家里 Mac 里偷吃算力的进程抓出来！👀',
+        workingClip: 'working_search',
+      }
+    }
+
+    // 3.6 自然语言定时提醒与计划任务
+    if (this.reminderManager) {
+      const reminderParse = this.reminderManager.parseNaturalLanguage(text)
+      if (reminderParse.isReminder && reminderParse.content) {
+        return {
+          isTask: true,
+          category: 'macos',
+          subAction: 'add_reminder',
+          queryOrTarget: text,
+          ackText: reminderParse.ackReply || '好嘞，大肥鱼记在小本本上啦！',
+          workingClip: 'thinking',
+        }
+      }
+    }
+
+    // 3.7 查看桌面/下载/当前目录文件
     if (/(?:看看桌面|桌面有什么文件|下载目录有什么|看看下载目录|看看当前目录|列出文件)/.test(text)) {
       return {
         isTask: true,
@@ -422,7 +493,7 @@ export class TaskExecutor extends EventEmitter {
       }
     }
 
-    // 3.4 打开网页或应用
+    // 3.8 打开网页或应用
     const openMatch = text.match(/(?:帮我|给我|请)?(?:打开|启动|唤醒|访问)\s*([^\s，。！？,!?]+(?:\s+[^\s，。！？,!?]+)?)/i)
     if (openMatch && openMatch[1]) {
       const target = openMatch[1].replace(/[吧呀啦呢~！!]/g, '').trim()
@@ -620,6 +691,143 @@ export class TaskExecutor extends EventEmitter {
     target: string,
     startTime: number
   ): Promise<TaskExecutionResult> {
+    if (subAction === 'screenshot') {
+      const tempPath = path.join(os.tmpdir(), `dafeiyu-screen-${Date.now()}.jpg`)
+      let base64 = ''
+      try {
+        childProcess.execFileSync('screencapture', ['-x', '-t', 'jpg', tempPath], { timeout: 6000 })
+        if (fs.existsSync(tempPath)) {
+          const buf = fs.readFileSync(tempPath)
+          base64 = buf.toString('base64')
+          fs.unlinkSync(tempPath)
+        }
+      } catch (err: any) {
+        return {
+          success: false,
+          category: 'macos',
+          title: '屏幕抓拍失败',
+          spokenReply: '唔…抓拍屏幕时镜头被挡住啦，老爸检查一下系统屏幕录制权限嘛~',
+          detailReport: `screencapture 失败: ${err?.message || String(err)}`,
+          clip: 'error',
+          tone: 'sulking',
+          durationMs: Date.now() - startTime,
+        }
+      }
+
+      return {
+        success: true,
+        category: 'macos',
+        title: '📸 屏幕抓拍完成',
+        spokenReply: '老爸快看！本鱼抓拍好家里 Mac 现在的屏幕画面啦~ 📸',
+        detailReport: '已调用 macOS 原生 screencapture 静默捕获桌面全景',
+        clip: 'success',
+        tone: 'happy',
+        durationMs: Date.now() - startTime,
+        screenshotBase64: base64,
+      }
+    }
+
+    if (subAction === 'caffeinate_on') {
+      if (!this.caffeinateProcess) {
+        try {
+          this.caffeinateProcess = childProcess.spawn('caffeinate', ['-dimsu'], {
+            detached: true,
+            stdio: 'ignore',
+          })
+          this.caffeinateProcess.unref()
+        } catch {}
+      }
+      return {
+        success: true,
+        category: 'macos',
+        title: '☕ 防休眠保持唤醒已激活',
+        spokenReply: '老爸放心！大肥鱼已给 Mac 注入防休眠咖啡因，保证 7×24 小时清醒看家~ ☕',
+        detailReport: '已启动后台 caffeinate -dimsu 进程，防止显示器与系统待机断网。',
+        clip: 'success',
+        tone: 'happy',
+        durationMs: Date.now() - startTime,
+      }
+    }
+
+    if (subAction === 'caffeinate_off') {
+      if (this.caffeinateProcess) {
+        try {
+          this.caffeinateProcess.kill('SIGTERM')
+        } catch {}
+        this.caffeinateProcess = null
+      }
+      try {
+        childProcess.execSync('pkill -f "caffeinate -dimsu"', { stdio: 'ignore' })
+      } catch {}
+
+      return {
+        success: true,
+        category: 'macos',
+        title: '🌙 防休眠已解除',
+        spokenReply: '已取消强制唤醒，Mac 可以按照节能策略安心休息啦~ 🌙',
+        detailReport: '已终止 caffeinate 守护进程，系统恢复默认休眠节能配置。',
+        clip: 'success',
+        tone: 'happy',
+        durationMs: Date.now() - startTime,
+      }
+    }
+
+    if (subAction === 'top_processes') {
+      let procReport = ''
+      try {
+        const out = childProcess.execSync('ps -Ao pcpu,pmem,comm -r', { encoding: 'utf-8', timeout: 3000 })
+        const lines = out.trim().split('\n').slice(0, 6)
+        procReport = lines.map((l) => `• ${l.trim()}`).join('\n')
+      } catch (err: any) {
+        procReport = `获取失败: ${err.message}`
+      }
+
+      return {
+        success: true,
+        category: 'macos',
+        title: '🔥 电脑进程占用排行',
+        spokenReply: '报告老爸！本鱼把最吃 CPU 和内存的几个大户揪出来啦，清单放控制台咯~ 👀',
+        detailReport: `【耗能前 5 进程清单 (CPU% / 内存% / 进程名)】\n${procReport}`,
+        clip: 'success',
+        tone: 'happy',
+        durationMs: Date.now() - startTime,
+      }
+    }
+
+    if (subAction === 'add_reminder' && this.reminderManager) {
+      const parsed = this.reminderManager.parseNaturalLanguage(target)
+      if (parsed.isReminder && parsed.content) {
+        const triggerTime =
+          parsed.type === 'once'
+            ? (parsed.targetMs || Date.now() + 60000)
+            : (parsed.dailyMinute || 0)
+        const rem = this.reminderManager.addReminder({
+          type: parsed.type || 'once',
+          triggerTime,
+          targetUserId: 'owner',
+          channel: 'private',
+          content: parsed.content,
+          isTask: Boolean(parsed.isTask),
+        })
+
+        return {
+          success: true,
+          category: 'macos',
+          title: `⏰ 定时任务已记录: ${parsed.delayDesc}`,
+          spokenReply: parsed.ackReply || `收到！大肥鱼设定好啦，${parsed.delayDesc} 准时提醒老爸~`,
+          detailReport: [
+            `⏰ 任务编号: ${rem.id}`,
+            `• 时间安排: ${parsed.delayDesc}`,
+            `• 待办内容: ${parsed.content}`,
+            `• 自动执行: ${parsed.isTask ? '是 (任务类型，到点自动执行)' : '否 (纯消息提醒)'}`,
+          ].join('\n'),
+          clip: 'success',
+          tone: 'happy',
+          durationMs: Date.now() - startTime,
+        }
+      }
+    }
+
     if (subAction === 'system_status') {
       const totalMemGb = (os.totalmem() / 1024 ** 3).toFixed(1)
       const freeMemGb = (os.freemem() / 1024 ** 3).toFixed(1)
@@ -975,14 +1183,38 @@ export class TaskExecutor extends EventEmitter {
           reject(new Error(`Antigravity 任务超过 ${timeoutSec}s 未完成`))
         }, (timeoutSec + 15) * 1000)
 
+        // 阶段实况碎碎念转播 (12s / 35s)
+        const progressTimer1 = setTimeout(() => {
+          this.emit('task_progress', {
+            elapsedSec: 12,
+            message: '唔，终端里输出的日志和文件有点多，本鱼正在使劲翻找排查呢，老爸再等我片刻哦🐾',
+          })
+        }, 12000)
+        progressTimer1.unref?.()
+
+        const progressTimer2 = setTimeout(() => {
+          this.emit('task_progress', {
+            elapsedSec: 35,
+            message: '这道题难度有点大，Antigravity 和本鱼正在深层推导诊断，马上就好啦~ 💦',
+          })
+        }, 35000)
+        progressTimer2.unref?.()
+
+        const cleanUpProgress = () => {
+          clearTimeout(progressTimer1)
+          clearTimeout(progressTimer2)
+        }
+
         child.stdout?.on('data', (d) => (stdout += d.toString('utf-8')))
         child.stderr?.on('data', (d) => (stderr += d.toString('utf-8')))
         child.on('error', (err) => {
           clearTimeout(timer)
+          cleanUpProgress()
           reject(err)
         })
         child.on('close', (code) => {
           clearTimeout(timer)
+          cleanUpProgress()
           if (code === 0 && stdout.trim()) {
             resolve(stdout.trim())
           } else {

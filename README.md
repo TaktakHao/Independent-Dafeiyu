@@ -8,8 +8,9 @@
 
 </div>
 
-> 🚀 **v2.0 独立桌面伴侣与抖音直播版全新升级**：
-> 已彻底剥离 DSH / Cordis 宿主依赖！支持独立常驻桌面，具备 **4 级阶梯大脑（Agent CLI 优先 / DeepSeek 流式 / 本地 LLM / 离线规则）**、**SQLite 5 级记忆与直播物理隐私隔离**、**三轴情绪状态机**、**屏幕弹幕 OCR 识别**与**本地主播控制台（http://127.0.0.1:7788）**。
+> 🚀 **v2.5「赛博看家女儿 · 闲置 Mac 拟人化全能管家 (OpenClaw 范式)」全新升级**：
+> 已解除锁屏封印，让家里闲置的 Mac 真正变为 7×24 小时随时可调用的二次元赛博女仆管家！
+> 具备 **后台异常巡检吹哨与一键自愈 (`HomeWatchdogSensor`)**、**自然语言定时提醒与计划任务 (`ReminderManager`)**、**远程眼睛高清屏幕抓拍直传 QQ**、**防休眠咖啡因守护 (`caffeinate`)**、**时间差与思念体感注入**、**早安晨报与全动态作息 LLM 生成**、**长任务执行阶段实况碎碎念转播**。
 
 ---
 
@@ -126,10 +127,21 @@ npm run start:live
      - 在控制台对话区顶部或模式栏一键切入 **「🛠️ 工作模式 (`work`)」** 后，大肥鱼桌面姿态自动切换为专注待命（`working_command`），且对话框中输入的任何内容都会**默认直通行动脑（Antigravity + Mac操控 + 搜索）执行任务**，无需再手动添加触发前缀。
      - **输入框防回车误触保护**：升级为多行 `<textarea>` 并拦截中文输入法 `isComposing` 选词回车；单独按 `Enter` 仅换行绝不误发，需点击右侧按钮或按 `⌘ Cmd + Enter`（`Ctrl + Enter`）发送。
    - **快慢双脑意图分流**：闲聊继续走秒级响应的 `dafeiyu-chat` 沙箱；当处于 `work` 工作模式或在 `companion` 模式下检测到操控、搜索、编程排障或技能教学意图时（`live` 直播模式物理锁死），先由快脑秒回傲娇领命台词并切换 `working_command` / `working_search` 动画，再由行动脑执行真实操作。
-   - **三大实操能力**：
-     - **Mac 原生操控 (`macos`)**：支持电脑健康体检（电池电量、内存占用、磁盘剩余空间、CPU 负载）、系统音量调节与静音控制（AppleScript `osascript`）、唤起本地应用（`open -a`）、打开指定网站以及查看桌面/下载/工作区目录文件。
+   - **四大实操与看家能力**：
+     - **Mac 原生操控与远程眼睛 (`macos`)**：
+       - 📸 **高清屏幕抓拍直发 QQ (`screenshot`)**：支持老爸在手机 QQ 说「截个图/看看屏幕」，静默调用 macOS 原生 `screencapture` 抓拍桌面并以 CQ 码图片直传 QQ。
+       - ☕ **防休眠咖啡因守护 (`caffeinate`)**：支持老爸在 QQ 随时下达「开启防休眠 / 保持唤醒」或「关闭防休眠」，守护后台长期挂机与量化任务。
+       - 🔥 **卡顿高耗能排查 (`top_processes`)**：支持「电脑怎么这么卡 / 查进程」，精准揪出最吃 CPU / 内存的前 5 名进程。
+       - 💻 **电脑健康体检与操控**：电池电量、内存占用、磁盘空间、CPU 负载、音量调节与静音（AppleScript `osascript`）、唤起应用（`open -a`）、查看桌面/下载目录。
      - **全网实时搜索 (`search`)**：结合 Wikipedia / DuckDuckGo 实时摘要检索与大模型提炼，播报口语化结论并在控制台输出结构化卡片。
-     - **唤醒满血 Antigravity (`antigravity`)**：挂载开启读写/命令/MCP 权限的 `dafeiyu-operator` Agent，调用宿主 `agy` 协助排查代码、运行脚本与诊断项目。
+     - **自然语言定时与计划任务 (`ReminderManager`)**：
+       - 倒计时任务：「20分钟后提醒我看代码」、「半小时后帮我查一下okx持仓」。
+       - 每日定时日常：「每天早上8点半给我汇报电脑状态」、「每天23点提醒我睡觉」。
+       - 任务型定时到点自动调用行动脑执行并回传完整报告，纯消息型准时傲娇催促。
+     - **唤醒满血 Antigravity (`antigravity`)**：挂载开启读写/命令/MCP 权限的 `dafeiyu-operator` Agent，调用宿主 `agy` 协助排查代码、运行脚本与诊断项目；执行超过 12 秒与 35 秒时自动在 QQ 触发中途进度碎碎念转播，彻底消除黑盒等待焦虑。
+   - **后台异常巡检哨兵与一键自愈 (`HomeWatchdogSensor`)**：
+     - 7×24 小时零 Token 静默巡检 Docker 容器存活、okx-dog 后端状态与风控熔断、电池低电量与根分区磁盘空间危急。
+     - 边沿触发防刷屏告警（60 分钟冷却），主动私聊老爸吹哨并附带一键自愈建议（老爸只需回复「好」或「重启」即可一秒执行修复）。
    - **技能自进化 (`LearnedSkill` & `SKILL.md` 生成)**：
      - 支持在对话中直接传授新技能（如 `以后我说【早安体检】你就帮我【检查电脑状态】`），自动持久化至技能树并在 `runtime/data/learned-skills/<id>/SKILL.md` 生成标准 Antigravity 技能定义文件；每次协同完成任务自动累加技能经验值并升级熟练度等级 (`Lv.x`)。
    - **控制台新增接口 (`http://127.0.0.1:7788`)**：
@@ -398,4 +410,35 @@ CI 还会隔离安装 DSH 0.2.0-rc.2 并运行 `scripts/test-dsh-settings.mjs`�
      ```
      该脚本自动唤起伴侣主程序、探测本地代理加速 Cloudflare Tunnel、自动打开浏览器并打印出专属企微回调 URL。
    将终端或网页输出的 `https://<公网域名>/api/gateway/wechat` 填入企业微信后台的 URL 输入框，点击保存即可一次性握手通过！
+
+---
+
+## 🐧 QQ (OneBot v11 / NapCat) 拟人化多气泡与表情包互动引擎
+
+大肥鱼内置了面向 QQ 私聊与群聊的**拟人化分段气泡与表情包独立编排引擎**（`src/standalone/brain/meme-manager.ts` & `src/standalone/gateway/qq-orchestrator.ts`）：
+
+1. **图文 100% 物理分离发送**：
+   - 文字气泡与 `[CQ:image,...]` 表情包永远分开发送，彻底告别“文字+图片塞在同一个气泡”的机器人违和感。
+   - 群聊中发送独立表情包或连发第 2~3 条短句气泡时自动启用 `skipAt: true`，不重复携带 `@用户` 前缀。
+2. **多模式拟人气泡节奏（告别一问一答客服腔）**：
+   - **长句自动切分连发**：支持 `|` 显式分段及自然语气标点切分，将回复拆解为 1~3 条短促气泡，按字数模拟 `400ms ~ 900ms` 的真人打字停顿。
+   - **多样化表情包出场**：支持「先甩表情包再说话（傲娇/斗图）」、「夹心连击（说半句 -> 甩张图 -> 再补半句）」以及「说完补图」。
+   - **斗图感知与延迟追击 (`afterthought`)**：自动识别对方发来的纯表情包/QQ表情进行回敬；当对方只回“嗯/哦/哈哈”等敷衍短词或大肥鱼意犹未尽时，会在 `3~4.5s` 后（若对方未发新消息）主动追加傲娇碎碎念或反问。
+   - **主动破冰搭话**：结合桌面窗口感知与作息时钟，在老爸长时间写代码或冷场时主动发 QQ 气泡与独立表情包刷存在感。
+
+---
+
+## 🏗️ Standalone 独立伴侣分层与模块化架构
+
+`src/standalone/main.ts` 采用纯粹的**依赖注入组装根（Composition Root）**设计，将核心业务解耦为职责单一的独立领域编排模块：
+
+| 模块路径 | 核心类 / 函数 | 架构职责 |
+| :--- | :--- | :--- |
+| `src/standalone/main.ts` | `bootstrap` | 依赖注入组装根与生命周期启停入口 |
+| `src/standalone/core/config-loader.ts` | `loadConfig`, `getOwnerQq`, `loadOneBotSecrets` | 配置文件、密盒凭证 (`secrets.json`) 与 CLI 参数加载 |
+| `src/standalone/events/dialogue-pipeline.ts` | `DialoguePipeline` | 优先级事件消费、三阶段对话推理管线（安全守卫 → 快捷短路 → 3-Layer Prompt & Brain 推理 & 记忆内化）与 TTS 语音播报 |
+| `src/standalone/gateway/qq-orchestrator.ts` | `QqOrchestrator` | QQ 私聊/群聊路由、主人双通道审批口令、L0/L1/L2 权限矩阵、拟人多气泡与独立表情包发送、延迟追击与后台 `agy` 任务派发 |
+| `src/standalone/persona/companion-lifecycle.ts` | `CompanionLifecycleController` | 前台窗口与 Antigravity 状态同步、15s 灵动摸鱼微动作循环、60s 赛博共生体 RPG 数值演化与传感器事件绑定 |
+
+
 

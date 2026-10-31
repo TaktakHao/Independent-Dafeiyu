@@ -157,6 +157,31 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_approval_created_at ON approval_requests(created_at DESC);
       `)
     }
+  },
+  {
+    version: 3,
+    name: 'm5_reminders_and_schedules',
+    up: (db: DatabaseSync) => {
+      // 自然语言定时提醒与管家计划任务表
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS scheduled_reminders (
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL,                          -- 'once' (单次倒计时/定时) | 'daily' (每日定时)
+          trigger_time INTEGER NOT NULL,               -- once: 触发毫秒时间戳; daily: 当天分钟偏移量 (0~1439, 如 08:30 = 510)
+          target_user_id TEXT NOT NULL,                -- 目标用户标识，如 'owner' 或 'qq:<userId>'
+          channel TEXT NOT NULL DEFAULT 'private',     -- 'private' | 'group'
+          group_id TEXT DEFAULT NULL,                  -- 群号 (若是群提醒)
+          content TEXT NOT NULL,                       -- 提醒文本或要执行的指令
+          is_task INTEGER NOT NULL DEFAULT 0,          -- 0: 纯文本提醒; 1: 关联管家任务需要执行后汇报
+          status TEXT NOT NULL DEFAULT 'active',       -- 'active' | 'fired' | 'cancelled'
+          created_at INTEGER NOT NULL,
+          last_fired_at INTEGER DEFAULT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_reminders_status_time ON scheduled_reminders(status, trigger_time);
+        CREATE INDEX IF NOT EXISTS idx_reminders_user ON scheduled_reminders(target_user_id, status);
+      `)
+    }
   }
 ]
 
