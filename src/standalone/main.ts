@@ -64,6 +64,9 @@ import { ReminderManager } from './sensors/reminder-manager.ts'
 import { OneBotGateway } from './gateway/onebot-gateway.ts'
 import { QqOrchestrator } from './gateway/qq-orchestrator.ts'
 import { ConsoleServer } from './console/server.ts'
+import { SQLiteCheckpointer } from './graph/sqlite-checkpointer.ts'
+import { buildCompanionGraph, type CompanionGraphState } from './graph/companion-graph.ts'
+import type { CompiledGraph } from './graph/engine.ts'
 
 export { getOwnerQq }
 
@@ -93,6 +96,8 @@ export interface FullAppInstance {
   onebotGateway?: OneBotGateway
   permissionGuard?: PermissionGuard
   approvalManager?: ApprovalManager
+  companionGraph?: CompiledGraph<CompanionGraphState>
+  checkpointer?: SQLiteCheckpointer
   stop: () => Promise<void>
 }
 
@@ -237,11 +242,29 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
     liveBlockKeywords: fileConfig.privacy?.liveBlockKeywords || [],
   })
 
-  // 6. 权限网关、QQ OneBot 直连网关与 QQ 业务协调器 (QqOrchestrator)
+  // 6. 权限网关、微内核状态图 (CompanionGraph) 与 QQ 业务协调器 (QqOrchestrator)
   const initialOwnerQq = getOwnerQq(fileConfig)
   const permissionGuard = new PermissionGuard(initialOwnerQq)
   const approvalManager = new ApprovalManager(db)
   const onebotGateway = new OneBotGateway(loadOneBotSecrets(initialOwnerQq, config.headless))
+
+  const checkpointer = new SQLiteCheckpointer(db)
+  const companionWorkflow = buildCompanionGraph({
+    state,
+    inputGuard,
+    outputGuard,
+    permissionGuard,
+    approvalManager,
+    taskExecutor,
+    brain,
+    promptBuilder,
+    memeManager,
+    scopedWorkingMemory,
+    impression,
+    contactImpression,
+    memory,
+  })
+  const companionGraph = companionWorkflow.compile({ checkpointer })
 
   const publicQueryTopics: string[] = Array.isArray(connectorConfig.publicQueryTopics)
     ? connectorConfig.publicQueryTopics
@@ -257,6 +280,7 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
     taskExecutor,
     memeManager,
     dialoguePipeline,
+    companionGraph,
     brain,
     homeWatchdog,
     reminderManager,
@@ -338,6 +362,8 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
     onebotGateway,
     permissionGuard,
     approvalManager,
+    companionGraph,
+    checkpointer,
     stop: async () => {
       lifecycleController.stop()
       homeWatchdog.stop()

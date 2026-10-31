@@ -182,6 +182,27 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_reminders_user ON scheduled_reminders(target_user_id, status);
       `)
     }
+  },
+  {
+    version: 4,
+    name: 'm6_graph_checkpoints',
+    up: (db: DatabaseSync) => {
+      // 状态图断点快照与 Human-in-the-Loop 挂起表
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS graph_checkpoints (
+          thread_id TEXT NOT NULL,
+          checkpoint_id TEXT NOT NULL,
+          parent_checkpoint_id TEXT DEFAULT NULL,
+          node_name TEXT NOT NULL,
+          state_json TEXT NOT NULL,
+          interrupt_payload TEXT DEFAULT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (thread_id, checkpoint_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_checkpoints_thread_created ON graph_checkpoints(thread_id, created_at DESC);
+      `)
+    }
   }
 ]
 

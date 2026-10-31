@@ -44,9 +44,10 @@ test('1. Migration v2 幂等性、表结构与覆盖索引验证', () => {
 
     // 验证 migration version 2 记录已写入
     const migrationRows = db.prepare('SELECT version, name FROM schema_migrations ORDER BY version ASC').all() as any[]
-    assert.equal(migrationRows.length, 2)
-    assert.equal(migrationRows[1].version, 2)
-    assert.equal(migrationRows[1].name, 'm4_contacts_and_approvals')
+    assert.ok(migrationRows.length >= 2)
+    const m2 = migrationRows.find((r) => r.version === 2)
+    assert.ok(m2, 'version 2 migration 必须存在')
+    assert.equal(m2.name, 'm4_contacts_and_approvals')
 
     // 幂等性验证：二次执行迁移函数不抛出异常
     for (const m of MIGRATIONS) {

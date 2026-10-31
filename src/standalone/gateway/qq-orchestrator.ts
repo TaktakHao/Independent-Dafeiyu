@@ -24,6 +24,8 @@ import { getOwnerQq } from '../core/config-loader.ts'
 import type { HomeWatchdogSensor, WatchdogAlertEvent, WatchdogAlertSuggestion } from '../sensors/home-watchdog.ts'
 import type { ReminderManager, ScheduledReminder } from '../sensors/reminder-manager.ts'
 import type { TieredBrainRouter } from '../brain/router.ts'
+import type { CompiledGraph } from '../graph/engine.ts'
+import type { CompanionGraphState } from '../graph/companion-graph.ts'
 
 export interface QqOrchestratorDeps {
   state: StateManager
@@ -35,6 +37,7 @@ export interface QqOrchestratorDeps {
   taskExecutor: TaskExecutor
   memeManager: MemeManager
   dialoguePipeline: DialoguePipeline
+  companionGraph?: CompiledGraph<CompanionGraphState>
   brain?: TieredBrainRouter
   homeWatchdog?: HomeWatchdogSensor
   reminderManager?: ReminderManager
@@ -252,6 +255,50 @@ export class QqOrchestrator {
     action: 'approve' | 'reject'
   ): Promise<any> => {
     const { state, taskExecutor, outputGuard, onebotGateway } = this.deps
+
+    if (this.deps.companionGraph) {
+      const threadId =
+        req.channel === 'group' && req.groupId
+          ? `group:${req.groupId}`
+          : `private:${req.userId || req.senderExternalId}`
+      try {
+        const resumeRes = await this.deps.companionGraph.resume(threadId, {
+          isApproved: action === 'approve',
+          approvalCode: req.code,
+        })
+        if (resumeRes.status === 'completed') {
+          const st = resumeRes.finalState
+          if (action === 'approve') {
+            const finalReport = `报告！老爸已经在控制台批准你的请求啦~ ✨\n${st.spokenReply}\n\n${st.detailReport || ''}`.trim()
+            if (req.channel === 'group' && req.groupId) {
+              await onebotGateway.sendGroupMsg(
+                req.groupId,
+                `[CQ:at,qq=${req.senderExternalId}] ${finalReport}`
+              )
+              await this.sendScreenshotIfPresent(req.groupId, true, st.screenshotBase64)
+            } else {
+              await onebotGateway.sendPrivateMsg(req.senderExternalId, finalReport)
+              await this.sendScreenshotIfPresent(req.senderExternalId, false, st.screenshotBase64)
+            }
+            return { executed: true, detailReport: st.detailReport, spokenReply: st.spokenReply }
+          } else {
+            const rejectNotice = st.spokenReply || '略略略，老爸说不准动他电脑！'
+            if (req.channel === 'group' && req.groupId) {
+              await onebotGateway.sendGroupMsg(
+                req.groupId,
+                `[CQ:at,qq=${req.senderExternalId}] ${rejectNotice}`
+              )
+            } else {
+              await onebotGateway.sendPrivateMsg(req.senderExternalId, rejectNotice)
+            }
+            return { executed: false, rejected: true }
+          }
+        }
+      } catch (err: any) {
+        console.warn('[QqOrchestrator] 控制台恢复状态图异常，回退至传统执行:', err?.message)
+      }
+    }
+
     if (action === 'approve') {
       try {
         const taskRes = await taskExecutor.execute(req.intent, state.getMode() || 'companion')
@@ -527,6 +574,105 @@ export class QqOrchestrator {
       }
     }
 
+    // 2. 微内核状态图 (CompanionGraph) 全景流转
+    if (this.deps.companionGraph) {
+      const initialState: CompanionGraphState = {
+        threadId: sessionKey,
+        channel: 'qq',
+        isGroup,
+        groupId,
+        userId,
+        nickname: msg.nickname,
+        rawText: msg.text,
+        isOwner,
+        role,
+        preferredTitle,
+        sessionKey,
+        lastInteractionGapMin,
+        homeGuardSummary,
+        contactProfile,
+        sanitizedText: msg.text,
+        guardPassed: true,
+        inferredRoute: 'chat',
+        clip: 'idle',
+        tone: 'normal',
+        spokenReply: '',
+      }
+
+      const runRes = await this.deps.companionGraph.invoke(initialState, { threadId: sessionKey })
+
+      if (runRes.status === 'interrupted') {
+        const payload = runRes.interruptPayload as any
+        const req = payload?.approvalRequest
+        const code = payload?.code || req?.code || 'REQ'
+        await msg.reply(`想动老爸电脑？这得老爸点头才行！本鱼去请示一下~ (单号 ${code})`)
+
+        if (currentOwnerQq) {
+          const senderDisplay = `[${preferredTitle}]`
+          const srcDisplay = isGroup ? `在群[${groupId}]` : '私聊'
+          const notice = `【审批请求 ${code}】群友${senderDisplay}${srcDisplay}请求执行: [${req?.intentLabel || '宿主机操作'}]。回复[同意 ${code}]放行，[拒绝 ${code}]驳回`
+          await onebotGateway.sendPrivateMsg(currentOwnerQq, notice)
+        }
+        return
+      }
+
+      if (runRes.status === 'completed') {
+        const st = runRes.finalState
+        if (st.inferredRoute === 'blocked') {
+          await msg.reply(st.spokenReply || st.securityReason || '请求受限，请稍候再试')
+          return
+        }
+
+        if (st.chatPlan) {
+          for (let i = 0; i < st.chatPlan.immediateBubbles.length; i++) {
+            const b = st.chatPlan.immediateBubbles[i]
+            if (b.delayMs > 0) {
+              await sleepMs(b.delayMs)
+            }
+            await msg.reply(b.content, i === 0 ? st.clip : undefined, { skipAt: b.skipAt })
+          }
+
+          if (st.chatPlan.afterthought) {
+            this.cancelPendingAfterthought(sessionKey)
+            const followUp = st.chatPlan.afterthought
+            const timer = setTimeout(async () => {
+              this.pendingAfterthoughtTimers.delete(sessionKey)
+              try {
+                for (const b of followUp.bubbles) {
+                  if (b.delayMs > 0) {
+                    await sleepMs(b.delayMs)
+                  }
+                  await msg.reply(b.content, undefined, { skipAt: true })
+                }
+              } catch {}
+            }, followUp.delayMs)
+            timer.unref?.()
+            this.pendingAfterthoughtTimers.set(sessionKey, timer)
+          }
+        } else if (st.spokenReply) {
+          await msg.reply(st.spokenReply, st.clip)
+        }
+
+        if (st.detailReport) {
+          await sleepMs(450)
+          await msg.reply(st.detailReport, undefined, { skipAt: true })
+        }
+
+        await this.sendScreenshotIfPresent(
+          isGroup && groupId ? groupId : userId,
+          isGroup,
+          st.screenshotBase64
+        )
+        return
+      }
+
+      if (runRes.status === 'error') {
+        console.error('[QqOrchestrator] companionGraph 运行异常:', runRes.error)
+        await msg.reply('呜…本鱼脑袋里的一根状态电路短路了，请稍候再试~')
+        return
+      }
+    }
+
     // 2. 全局第一道防线：意图识别与风控决策矩阵（前置拦截所有 L2 越狱/密钥刺探/破坏指令）
     const taskIntent = taskExecutor.detectIntent(msg.text, state.getMode(), false, isOwner)
     const check = permissionGuard.evaluate(userId, msg.text, taskIntent)
@@ -787,6 +933,38 @@ export class QqOrchestrator {
       }
 
       const req = resolveRes.request
+
+      if (this.deps.companionGraph) {
+        const threadId =
+          req.channel === 'group' && req.groupId
+            ? `group:${req.groupId}`
+            : `private:${req.userId || req.senderExternalId}`
+        try {
+          const resumeRes = await this.deps.companionGraph.resume(threadId, {
+            isApproved: true,
+            approvalCode: code,
+          })
+          if (resumeRes.status === 'completed') {
+            const st = resumeRes.finalState
+            const finalReport = `报告！老爸已经批准你的请求啦~ ✨\n${st.spokenReply}\n\n${st.detailReport || ''}`.trim()
+            if (req.channel === 'group' && req.groupId) {
+              await onebotGateway.sendGroupMsg(
+                req.groupId,
+                `[CQ:at,qq=${req.senderExternalId}] ${finalReport}`
+              )
+              await this.sendScreenshotIfPresent(req.groupId, true, st.screenshotBase64)
+            } else {
+              await onebotGateway.sendPrivateMsg(req.senderExternalId, finalReport)
+              await this.sendScreenshotIfPresent(req.senderExternalId, false, st.screenshotBase64)
+            }
+            await msg.reply(`已遵命执行 ${code}，结果已回传原群~`)
+            return true
+          }
+        } catch (resumeErr: any) {
+          console.warn('[QqOrchestrator] companionGraph.resume 恢复异常，降级至传统执行:', resumeErr?.message)
+        }
+      }
+
       try {
         const taskRes = await taskExecutor.execute(req.intent, state.getMode() || 'companion')
         const cleanReply = outputGuard.sanitize(
@@ -834,6 +1012,22 @@ export class QqOrchestrator {
       }
 
       const req = resolveRes.request
+
+      if (this.deps.companionGraph) {
+        const threadId =
+          req.channel === 'group' && req.groupId
+            ? `group:${req.groupId}`
+            : `private:${req.userId || req.senderExternalId}`
+        try {
+          await this.deps.companionGraph.resume(threadId, {
+            isApproved: false,
+            approvalCode: code,
+          })
+        } catch (resumeErr: any) {
+          console.warn('[QqOrchestrator] companionGraph.resume 驳回异常:', resumeErr?.message)
+        }
+      }
+
       const rejectNotice = '略略略，老爸说不准动他电脑！'
       if (req.channel === 'group' && req.groupId) {
         await onebotGateway.sendGroupMsg(
