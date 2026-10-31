@@ -24,6 +24,8 @@ import { DeepSeekProvider } from './brain/providers/deepseek.ts'
 import { AgentCliProvider } from './brain/cli-pool.ts'
 import { PromptBuilder } from './brain/prompt-builder.ts'
 import { TaskExecutor } from './brain/task-executor.ts'
+import { DockerConnector, OkxDogConnector, isRiskyTask, resolveQueryTopic } from './brain/connectors.ts'
+import { MemeManager } from './brain/meme-manager.ts'
 
 import { EmotionEngine, evaluateEmotionFSM } from './persona/emotion.ts'
 import { InnerThoughtLoop } from './persona/inner-thought.ts'
@@ -260,7 +262,25 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
   })
 
   const promptBuilder = new PromptBuilder(fileConfig.prompt?.inputBudgetTokens ?? 2100)
-  const taskExecutor = new TaskExecutor({ brain, impression })
+  const operatorConfig = fileConfig.operator || {}
+  const connectorConfig = fileConfig.connectors || {}
+  const taskExecutor = new TaskExecutor({
+    brain,
+    impression,
+    operator: operatorConfig,
+    okxDog: new OkxDogConnector({ baseUrl: connectorConfig.okxDog?.baseUrl }),
+    docker: new DockerConnector(),
+  })
+  /** 非主人也可直接执行的只读查询主题（非危险、非个人隐私） */
+  const publicQueryTopics: string[] = Array.isArray(connectorConfig.publicQueryTopics)
+    ? connectorConfig.publicQueryTopics
+    : ['okx', 'web']
+  const maxConcurrentOperatorTasks = Math.max(1, Number(operatorConfig.maxConcurrent ?? 2))
+  let activeOperatorTasks = 0
+
+  // 4.5 初始化大肥鱼表情包与自制形象引擎
+  const memeManager = new MemeManager()
+  memeManager.initDesktopMemes().catch(() => {})
 
   // 5. 初始化事件队列与事件路由分发器
   const eventQueue = new PriorityEventQueue(fileConfig.live?.staleEventMs ?? 20000)
@@ -465,7 +485,7 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
 
       // C1. 若为伴侣模式或工作模式下主人的指令，优先检测是否触发电脑操控 / 搜索 / Antigravity 任务 / 技能教学
       if (!isLive && isOwner && event.text) {
-        const taskIntent = taskExecutor.detectIntent(event.text, currentMode, forceWork)
+        const taskIntent = taskExecutor.detectIntent(event.text, currentMode, forceWork, isOwner)
         if (taskIntent.isTask) {
           // 第一阶段：立即切换桌面工作姿态与状态栏卡片，说出傲娇领命台词
           scheduler.updateStateCard({
@@ -691,6 +711,7 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
         clip: sanitized.clip,
         tone: sanitized.tone,
         assimilated,
+        parsedMeta: brainResult.output,
       } as any)
     }
   }
@@ -704,6 +725,16 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
   scheduleClock.on('event', (e: StandardEvent) => {
     eventQueue.enqueue(e)
     dispatchNextEvent()
+
+    // 主动关怀打破一问一答：作息时钟触发（如饭点、睡前日记、或长时间工作提醒）时，主动私聊给老爸发条 QQ 问候
+    try {
+      const ownerQq = onebotGateway?.getOwnerQq() || permissionGuard.getOwnerQq()
+      if (ownerQq && e.text && state.getMode() === 'companion') {
+        const meme = memeManager.pickMemeForEmotion('eat_token', 'happy')
+        const cq = meme ? `\n${memeManager.toCqCode(meme)}` : ''
+        onebotGateway?.sendPrivateMsg(ownerQq, `${e.text}${cq}`).catch(() => {})
+      }
+    } catch {}
   })
 
   scheduleClock.on('bedtime_diary_trigger', async (date: Date) => {
@@ -860,7 +891,7 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
       }
 
       // 2. 全局第一道防线：意图识别与风控决策矩阵（前置拦截所有 L2 越狱/密钥刺探/破坏指令，绝不穿透至 LLM）
-      const taskIntent = taskExecutor.detectIntent(msg.text, state.getMode(), false)
+      const taskIntent = taskExecutor.detectIntent(msg.text, state.getMode(), false, isOwner)
       const check = permissionGuard.evaluate(userId, msg.text, taskIntent)
 
       // 🔴 L2 核心禁区：无论是否为 taskIntent，非主人尝试口令传授/越狱伪造、或任何人尝试破坏指令/刺探密钥一律前置阻断
@@ -918,6 +949,52 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
         }
       }
 
+      // 2.6 专门索要/搜索表情包快捷处理（“发个猫猫表情包”、“来张傲娇的图”）
+      const MEME_REQ_PATTERNS = /(?:发|来|搜|找|要|发我|给我)\s*(?:一个|张|几张|个)?\s*(?:关于|带)?\s*(.+?)\s*(?:的)?\s*(?:表情包|表情|梗图|图片|图)/i
+      const memeMatch = msg.text.match(MEME_REQ_PATTERNS)
+      if (memeMatch) {
+        const kw = memeMatch[1].trim()
+        if (kw && !/(电脑|文件|代码|脚本|配置)/.test(kw)) {
+          // 优先看是否是找自己的形象表情
+          let matchedMeme = null
+          if (/(自己|大肥鱼|女仆|尾巴|摸头|傲娇|干饭|吃小鱼干|困|睡觉|工作)/.test(kw)) {
+            matchedMeme = memeManager.pickMemeForEmotion(
+              kw.includes('摸头') ? 'head_pat' : (kw.includes('吃') ? 'eat_token' : (kw.includes('傲娇') ? 'poke' : 'idle')),
+              'happy'
+            )
+          }
+          if (!matchedMeme) {
+            matchedMeme = await memeManager.searchAndCollectMeme(kw)
+          }
+
+          if (matchedMeme) {
+            const cq = memeManager.toCqCode(matchedMeme)
+            await msg.reply(`来啦！本鱼给你精选的「${kw}」表情包：\n${cq}`)
+            return
+          }
+        }
+      }
+      const quickTopic = resolveQueryTopic(undefined, msg.text)
+      if (quickTopic === 'okx' || quickTopic === 'web' || (quickTopic === 'docker' && isOwner)) {
+        const canExecute = isOwner || publicQueryTopics.includes(quickTopic)
+        if (canExecute) {
+          const queryRes = await taskExecutor.executeQuery({
+            topic: quickTopic,
+            question: msg.text,
+            preferredTitle,
+          })
+          const cleanReply = outputGuard.sanitize(
+            queryRes.spokenReply,
+            queryRes.clip,
+            queryRes.tone,
+            { liveMode: false, targetRole: role, preferredTitle }
+          ).text
+          const fullReply = `${cleanReply}\n\n${queryRes.detailReport}`
+          await msg.reply(fullReply, queryRes.clip)
+          return
+        }
+      }
+
       // 3. 纯观赏动作频控检测 (例如 "跳个舞" 30s 冷却)
       if (permissionGuard.isPetViewAction(msg.text)) {
         const petCheck = permissionGuard.checkPetActionCooldown()
@@ -957,8 +1034,99 @@ export async function bootstrap(config: StandaloneConfig = {}): Promise<FullAppI
         try {
           const rawReply = res?.text || '好嘞，大肥鱼收到啦！'
           const cleanReply = rawReply.replace(/<meta[^>]*>/gi, '').replace(/<\/meta>/gi, '').replace(/<mem[^>]*>.*?<\/mem>/gi, '').trim()
-          const finalReply = cleanReply || (res?.clip === 'dance' ? '看本鱼给你跳个开心的摇摆舞！💃' : '收到！大肥鱼随时待命哦~ 🐟')
+          let finalReply = cleanReply || (res?.clip === 'dance' ? '看本鱼给你跳个开心的摇摆舞！💃' : '收到！大肥鱼随时待命哦~ 🐟')
+
+          // 灵动配图：当情绪浓烈（收到投喂、傲娇、特别开心或委屈）时，约 35% 几率自选一张桌面表情包附上
+          const parsedMeta = res?.parsedMeta
+          const moodDelta = parsedMeta?.moodIntent ?? 0
+          const shouldAttachMeme = Math.random() < 0.35 || moodDelta >= 2 || parsedMeta?.fed
+          if (shouldAttachMeme) {
+            const meme = memeManager.pickMemeForEmotion(res?.clip || parsedMeta?.clip, res?.tone || parsedMeta?.tone)
+            if (meme) {
+              const cq = memeManager.toCqCode(meme)
+              if (cq) {
+                finalReply = `${finalReply}\n${cq}`
+              }
+            }
+          }
+
           await msg.reply(finalReply, res?.clip)
+
+          // 核心联动：若闲聊大脑在回答时顺带判定出 query / task 意图，后续在此自动衔接执行！
+          const inferredIntent = parsedMeta?.intent
+          const inferredTopic = parsedMeta?.topic
+          const inferredTask = parsedMeta?.task || msg.text
+
+          if (inferredIntent === 'query') {
+            const topic = resolveQueryTopic(inferredTopic, inferredTask, msg.text)
+            const canQuery = isOwner || publicQueryTopics.includes(topic)
+            if (canQuery) {
+              const queryRes = await taskExecutor.executeQuery({
+                topic,
+                question: msg.text,
+                goal: inferredTask,
+                preferredTitle,
+              })
+              const extraClean = outputGuard.sanitize(
+                queryRes.spokenReply,
+                queryRes.clip,
+                queryRes.tone,
+                { liveMode: false, targetRole: role, preferredTitle }
+              ).text
+              await msg.reply(`${extraClean}\n\n${queryRes.detailReport}`, queryRes.clip)
+            }
+          } else if (inferredIntent === 'task' && isOwner) {
+            // 主人在私聊或群聊中派发任务：自动触发后台真实操作 (agy)
+            if (isRiskyTask(inferredTask, msg.text)) {
+              // 高危/修改类操作：发起二次确认审批流，不静默强行执行
+              const tIntent = taskExecutor.buildTaskIntent(inferredTask, msg.text)
+              const createRes = approvalManager.createRequest({
+                userId,
+                nickname: preferredTitle,
+                channel: isGroup ? 'group' : 'private',
+                groupId,
+                intent: tIntent,
+                intentLabel: approvalManager.humanReadableLabel(tIntent),
+                rawText: msg.text,
+              })
+              if (createRes.success && createRes.request) {
+                await msg.reply(`⚠️ 这项操作可能影响电脑文件或状态，老爸确认要执行吗？\n回复【同意 ${createRes.request.code}】本鱼马上开工，回复【拒绝】取消~`)
+              }
+            } else {
+              // 普通任务：直接在后台调用满血 agy 执行，完成后异步推送回群聊或私聊
+              if (activeOperatorTasks >= maxConcurrentOperatorTasks) {
+                await msg.reply('呼——本鱼手头正在忙别的活呢，老爸等我片刻再派任务嘛~')
+              } else {
+                activeOperatorTasks++
+                const tIntent = taskExecutor.buildTaskIntent(inferredTask, msg.text)
+                taskExecutor.execute(tIntent, 'companion').then(async (tRes) => {
+                  try {
+                    const clean = outputGuard.sanitize(
+                      tRes.spokenReply,
+                      tRes.clip,
+                      tRes.tone,
+                      { liveMode: false, targetRole: 'owner', preferredTitle }
+                    ).text
+                    const report = tRes.success
+                      ? `${clean}\n\n${tRes.detailReport}`
+                      : `${clean}\n\n【失败详情】\n${tRes.detailReport}`
+                    if (isGroup && groupId) {
+                      await onebotGateway.sendGroupMsg(groupId, `[CQ:at,qq=${userId}] ${report}`)
+                    } else {
+                      await onebotGateway.sendPrivateMsg(userId, report)
+                    }
+                  } catch (err) {
+                    console.error('[OneBotGateway] 异步任务回执推送失败:', err)
+                  } finally {
+                    activeOperatorTasks--
+                  }
+                }).catch((err) => {
+                  activeOperatorTasks--
+                  console.error('[OneBotGateway] 后台任务执行异常:', err)
+                })
+              }
+            }
+          }
         } catch (replyErr) {
           console.error('[OneBotGateway] 发送消息回复异常:', replyErr)
         }

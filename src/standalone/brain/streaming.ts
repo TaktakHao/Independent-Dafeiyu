@@ -12,7 +12,29 @@ export interface StreamingMeta {
   fed: boolean
   memory?: string
   to?: string
+  intent?: 'chat' | 'query' | 'task'
+  topic?: string
+  task?: string
   [key: string]: any
+}
+
+const VALID_INTENTS = new Set(['chat', 'query', 'task'])
+const VALID_TOPICS = new Set(['okx', 'docker', 'web', 'computer', 'other'])
+
+/**
+ * 规范化闲聊大脑顺带输出的意图字段（非法值一律视为 chat，不触发任何动作）
+ */
+export function normalizeReplyIntent(meta: { intent?: unknown; topic?: unknown; task?: unknown } | null | undefined): {
+  intent: 'chat' | 'query' | 'task'
+  topic?: string
+  task?: string
+} {
+  const rawIntent = String(meta?.intent ?? '').trim().toLowerCase()
+  const intent = (VALID_INTENTS.has(rawIntent) ? rawIntent : 'chat') as 'chat' | 'query' | 'task'
+  const rawTopic = String(meta?.topic ?? '').trim().toLowerCase()
+  const topic = VALID_TOPICS.has(rawTopic) ? rawTopic : (intent === 'chat' ? undefined : 'other')
+  const task = String(meta?.task ?? '').trim().slice(0, 200) || undefined
+  return { intent, topic, task }
 }
 
 /**
@@ -48,6 +70,7 @@ export function parseStreamingMeta(metaLine: string): StreamingMeta | null {
     fed: attrs.fed === 'true' || attrs.fed === true,
     memory: attrs.memory ? String(attrs.memory).trim() : undefined,
     to: attrs.to ? String(attrs.to).trim() : undefined,
+    ...normalizeReplyIntent(attrs),
   }
 }
 

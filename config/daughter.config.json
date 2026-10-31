@@ -75,7 +75,7 @@
     "deepseek": {
       "apiKey": "",
       "baseUrl": "https://api.deepseek.com",
-      "model": "deepseek-chat",
+      "model": "deepseek-flash",
       "timeoutMs": 8000,
       "dailyBudgetCny": 5
     },
@@ -149,6 +149,27 @@
       "家庭住址",
       "工资",
       "银行卡"
+    ]
+  },
+  "operator": {
+    "command": "agy",
+    "model": "gemini-3.8-flash-medium",
+    "effort": "medium",
+    "sandbox": false,
+    "skipPermissions": true,
+    "timeoutSec": 600,
+    "maxConcurrent": 2,
+    "addDirs": [
+      "~"
+    ]
+  },
+  "connectors": {
+    "okxDog": {
+      "baseUrl": "http://127.0.0.1:8000"
+    },
+    "publicQueryTopics": [
+      "okx",
+      "web"
     ]
   }
 }

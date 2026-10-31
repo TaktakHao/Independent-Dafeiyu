@@ -7,7 +7,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
 import childProcess from 'node:child_process'
-import { parseStreamingMeta } from './streaming.ts'
+import { normalizeReplyIntent, parseStreamingMeta } from './streaming.ts'
 import { FIXED_PERSONA_LAYER_A } from './prompt-builder.ts'
 import type {
   BrainProvider,
@@ -237,6 +237,11 @@ export function parseCliStructuredOutput(stdout: string, stderr: string = ''): B
         fed,
         memory,
         to: typeof parsed.to === 'string' ? parsed.to.trim() : undefined,
+        ...normalizeReplyIntent({
+          intent: parsed.intent ?? metaParsed?.intent,
+          topic: parsed.topic ?? metaParsed?.topic,
+          task: parsed.task ?? metaParsed?.task,
+        }),
       }
     }
   }
@@ -255,6 +260,7 @@ export function parseCliStructuredOutput(stdout: string, stderr: string = ''): B
     tone: metaParsed?.tone || 'happy',
     moodIntent: metaParsed?.moodIntent || 0,
     fed: Boolean(metaParsed?.fed),
+    ...normalizeReplyIntent(metaParsed),
   }
 
   throw new Error('Failed to extract meaningful reply from CLI output')

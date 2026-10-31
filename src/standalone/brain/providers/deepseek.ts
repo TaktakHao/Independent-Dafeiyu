@@ -14,7 +14,7 @@ import type {
   LayeredPrompt,
   ProviderStatusInfo,
 } from '../types.ts'
-import { parseStreamingMeta } from '../streaming.ts'
+import { normalizeReplyIntent, parseStreamingMeta } from '../streaming.ts'
 
 export interface DeepSeekConfig {
   id?: string
@@ -690,6 +690,7 @@ export class DeepSeekProvider implements BrainProvider {
     let moodIntent = 0
     let fed = false
     let memory: string | undefined
+    let replyIntent: ReturnType<typeof normalizeReplyIntent> = { intent: 'chat' }
 
     const metaMatch = fullText.match(/<meta\s+([^>]+)\/?>/i)
     if (metaMatch) {
@@ -700,6 +701,7 @@ export class DeepSeekProvider implements BrainProvider {
         moodIntent = parsedMeta.moodIntent ?? moodIntent
         fed = Boolean(parsedMeta.fed)
         memory = parsedMeta.memory
+        replyIntent = normalizeReplyIntent(parsedMeta)
       }
     }
 
@@ -724,6 +726,7 @@ export class DeepSeekProvider implements BrainProvider {
       moodIntent,
       fed,
       memory,
+      ...replyIntent,
     }
 
     return {

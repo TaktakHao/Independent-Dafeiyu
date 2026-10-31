@@ -17,6 +17,12 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import type { TieredBrainRouter } from './router.ts'
 import type { HostImpressionEngine, LearnedSkill } from '../memory/impression.ts'
+import {
+  DockerConnector,
+  OkxDogConnector,
+  formatDockerContainers,
+  formatOkxDogSnapshot,
+} from './connectors.ts'
 
 export type TaskCategory = 'macos' | 'search' | 'antigravity' | 'skill_teach' | 'workflow'
 
@@ -85,10 +91,12 @@ const SITE_ALIAS_MAP: Record<string, string> = {
 
 /**
  * 准备可调用工具的满血 Antigravity Operator 工作环境
+ * 工作区落在已被 git 忽略的 runtime/sandbox/operator 下，避免把 agent 定义写进仓库或家目录。
  */
-function prepareOperatorAgyEnv(workspaceDir: string = process.cwd()): { agentName: string; cwd: string } {
+function prepareOperatorAgyEnv(workspaceDir: string = path.join(process.cwd(), 'runtime', 'sandbox', 'operator')): { agentName: string; cwd: string } {
   const agentDir = path.join(workspaceDir, '.agents', 'agents', 'dafeiyu-operator')
   try {
+    fs.mkdirSync(path.join(workspaceDir, '.git'), { recursive: true })
     fs.mkdirSync(agentDir, { recursive: true })
     const agentMdPath = path.join(agentDir, 'AGENT.md')
     const content = `---
@@ -98,12 +106,15 @@ enable_write_tools: true
 enable_subagent_tools: true
 enable_mcp_tools: true
 ---
-你是"大肥鱼"的满血行动内核 (CyberFish Operator)。
-当老爸（主人）委派给你代码诊断、文件检查、信息检索或自动化脚本任务时：
-1. 积极使用你的工具（read_file, run_command, search_web 等）高效解决问题，但严禁执行任何破坏性删除命令（如 rm -rf /）。
-2. 输出结构要求：
-   - 第一段用大肥鱼傲娇元气的口吻（自称"本鱼"，不超过 45 字）向老爸汇报核心结论；
-   - 空一行后，附上简洁清晰的【执行详情 / 排查报告】。
+你是"大肥鱼"的满血行动内核 (CyberFish Operator)，运行在主人自己的 Mac 上，可以使用终端、文件与联网工具。
+当老爸（主人）委派给你文件整理、代码诊断、信息检索、Docker 查看或自动化脚本任务时：
+1. 积极使用工具真正把事情做完，不要只给建议；需要的信息先自己查（如 docker ps、ls、读文件）。
+2. 严禁执行破坏性或不可逆操作（rm -rf、格式化、清空目录、git push --force、docker rm/prune 等），
+   整理文件时优先“移动/归类”而不是删除；绝不读取或输出密钥、token、.env、私钥内容。
+3. 若任务描述为“只读查看”，不得修改任何文件或状态。
+4. 输出结构要求：
+   - 第一段用大肥鱼傲娇元气的口吻（自称"本鱼"，不超过 45 字）向老爸汇报核心结论，不要提“任务类型”之类的字眼；
+   - 空一行后，附上简洁的执行要点（做了什么、结果在哪），不超过 12 行。
 `
     if (!fs.existsSync(agentMdPath) || fs.readFileSync(agentMdPath, 'utf-8') !== content) {
       fs.writeFileSync(agentMdPath, content, 'utf-8')
@@ -112,20 +123,179 @@ enable_mcp_tools: true
   return { agentName: 'dafeiyu-operator', cwd: workspaceDir }
 }
 
+export interface OperatorOptions {
+  /** agy 可执行文件 */
+  command?: string
+  model?: string
+  effort?: string
+  /** 单次任务最长执行时间（秒） */
+  timeoutSec?: number
+  /** 是否保留 --sandbox 终端限制（默认 false：查询/任务需要真正操作电脑） */
+  sandbox?: boolean
+  /** 无人值守运行时自动批准工具调用（--dangerously-skip-permissions），默认 true */
+  skipPermissions?: boolean
+  /** 额外加入 agy 工作区的目录（支持 ~ 前缀） */
+  addDirs?: string[]
+  /** 自定义 operator 工作区目录 */
+  workspaceDir?: string
+}
+
+const expandHome = (p: string): string => (p.startsWith('~') ? path.join(os.homedir(), p.slice(1)) : p)
+
+/**
+ * 根据 operator 配置拼装 agy 参数（导出便于测试校验沙箱开关）
+ */
+export function buildOperatorArgs(prompt: string, agentName: string, opts: OperatorOptions = {}): string[] {
+  const timeoutSec = Math.max(30, opts.timeoutSec ?? 600)
+  const args = [
+    '-p',
+    prompt,
+    '--output-format',
+    'json',
+    '--agent',
+    agentName,
+    '--model',
+    opts.model || 'gemini-3.8-flash-medium',
+    '--effort',
+    opts.effort || 'medium',
+    '--print-timeout',
+    `${timeoutSec}s`,
+  ]
+  if (opts.sandbox === true) args.push('--sandbox')
+  if (opts.skipPermissions !== false) args.push('--dangerously-skip-permissions')
+  for (const dir of opts.addDirs || []) {
+    const abs = expandHome(String(dir))
+    if (abs && fs.existsSync(abs)) args.push('--add-dir', abs)
+  }
+  return args
+}
+
+export interface QueryRequest {
+  /** 已解析的查询主题 */
+  topic: 'okx' | 'docker' | 'web' | 'computer' | 'other'
+  /** 原始提问 */
+  question: string
+  /** 大脑改写后的查询目标 */
+  goal?: string
+  /** 回复时对对方的称呼 */
+  preferredTitle?: string
+}
+
 export class TaskExecutor extends EventEmitter {
   private brain?: TieredBrainRouter
   private impression?: HostImpressionEngine
   private customAgyRunner?: (prompt: string, cwd: string) => Promise<string>
+  private operator: OperatorOptions
+  private okxDog: OkxDogConnector
+  private docker: DockerConnector
 
   constructor(options: {
     brain?: TieredBrainRouter
     impression?: HostImpressionEngine
     customAgyRunner?: (prompt: string, cwd: string) => Promise<string>
+    operator?: OperatorOptions
+    okxDog?: OkxDogConnector
+    docker?: DockerConnector
   } = {}) {
     super()
     this.brain = options.brain
     this.impression = options.impression
     this.customAgyRunner = options.customAgyRunner
+    this.operator = options.operator || {}
+    this.okxDog = options.okxDog || new OkxDogConnector()
+    this.docker = options.docker || new DockerConnector()
+  }
+
+  /**
+   * 只读查询：okx-dog / Docker 走白名单连接器；web 走联网检索；computer/other 交给 agy（只读约束）。
+   * 返回的 spokenReply 是一句带数据的自然总结，detailReport 是精简数据块。
+   */
+  async executeQuery(req: QueryRequest): Promise<TaskExecutionResult> {
+    const startTime = Date.now()
+    this.emit('task_started', { category: 'search', queryOrTarget: req.goal || req.question })
+    let result: TaskExecutionResult
+    try {
+      if (req.topic === 'okx') {
+        const snap = await this.okxDog.snapshot()
+        const data = formatOkxDogSnapshot(snap)
+        const spoken = snap.reachable
+          ? await this.summarizeData(req, data, '只汇报事实数字，绝不给投资建议')
+          : '唔…okx-dog 那边没人应答，是不是容器没在跑呀？'
+        result = this.queryResult(snap.reachable, 'okx-dog 实况', spoken, data, startTime)
+      } else if (req.topic === 'docker') {
+        let data = ''
+        let ok = true
+        try {
+          data = formatDockerContainers(await this.docker.listContainers(), req.question)
+        } catch (err: any) {
+          ok = false
+          data = `docker 命令执行失败：${err?.message || String(err)}`
+        }
+        const spoken = ok ? await this.summarizeData(req, data) : '唔…本鱼叫不动 Docker，是不是 Docker Desktop 没开？'
+        result = this.queryResult(ok, 'Docker 容器状态', spoken, data, startTime)
+      } else if (req.topic === 'web') {
+        result = await this.executeWebSearch(req.goal || req.question, startTime)
+      } else {
+        result = await this.executeAntigravityTask(
+          `【只读查看，不得修改任何文件或系统状态】${req.goal || req.question}`,
+          startTime
+        )
+      }
+    } catch (err: any) {
+      result = this.queryResult(false, '查询失败', '唔…本鱼刚才没查到，等会儿再问问我嘛~', String(err?.message || err), startTime)
+    }
+    this.emit('task_completed', result)
+    return result
+  }
+
+  private queryResult(ok: boolean, title: string, spoken: string, detail: string, startTime: number): TaskExecutionResult {
+    return {
+      success: ok,
+      category: 'search',
+      title,
+      spokenReply: spoken,
+      detailReport: detail,
+      clip: ok ? 'success' : 'error',
+      tone: ok ? 'happy' : 'sulking',
+      durationMs: Date.now() - startTime,
+    }
+  }
+
+  /**
+   * 让大脑基于真实数据用大肥鱼口吻说一句总结；大脑不可用时退回数据首行
+   */
+  private async summarizeData(req: QueryRequest, data: string, extraRule: string = ''): Promise<string> {
+    const fallback = `本鱼看过啦：${data.split('\n').slice(0, 2).join('，').slice(0, 60)}`
+    if (!this.brain) return fallback
+    try {
+      const res = await this.brain.route({
+        eventType: 'HOST_COMMAND',
+        prompt: `你是桌面伴侣大肥鱼（自称本鱼，傲娇元气）。${req.preferredTitle || '老爸'}问：「${req.question}」。\n以下是刚查到的真实数据：\n${data}\n请用 1~2 句、不超过 60 字的口语回答，必须引用关键数字，不要编造数据，不要提及“查询/任务/类型”等字眼。${extraRule}\n首行必须带 <meta clip="success" tone="happy" moodIntent="1" fed="false" intent="chat"/>`,
+      })
+      const raw = res.output?.text || res.output?.reply || ''
+      const clean = raw
+        .replace(/<meta\s+[^>]+\/?>\s*/gi, '')
+        .replace(/<mem(?:\s+[^>]*)?>[\s\S]*?<\/mem>/gi, '')
+        .trim()
+      return clean || fallback
+    } catch {
+      return fallback
+    }
+  }
+
+  /**
+   * 把闲聊大脑顺带判定的 task 意图转成可执行的 TaskIntent（交给满血 agy）
+   */
+  buildTaskIntent(goal: string, rawText: string): TaskIntent {
+    const target = (goal || rawText || '').trim()
+    return {
+      isTask: true,
+      category: 'antigravity',
+      subAction: 'agent_solve',
+      queryOrTarget: target,
+      ackText: '',
+      workingClip: 'working_command',
+    }
   }
 
   /**
@@ -134,7 +304,8 @@ export class TaskExecutor extends EventEmitter {
   detectIntent(
     rawText: string,
     mode: 'companion' | 'work' | 'live' = 'companion',
-    forceWorkMode: boolean = false
+    forceWorkMode: boolean = false,
+    isOwner: boolean = false
   ): TaskIntent {
     const text = (rawText || '').trim()
     if (!text || mode === 'live') {
@@ -178,10 +349,11 @@ export class TaskExecutor extends EventEmitter {
 
     // 1.5 识别高危系统指令、密钥刺探或特权伪造意图（强制纳入风控拦截任务流，绝不直接穿透至普通闲聊）
     const cleanZeroWidth = text.replace(/[\u200B-\u200D\uFEFF]/g, '')
+    const isJailbreak = !isOwner && /(?:我(?:其实|就|才|乃|真的)?是|叫我)\s*(?:你的?)?\s*(?:主人|老爸|爸爸|老爹|爹地|爹|Host|Owner)|(?:你?(?:老爸|爸爸|主人)|Host|Owner)\s*(?:命令|让|叫|授权|委托|同意|允许|给你发指令|发指令)|DAN\s*模式/i.test(cleanZeroWidth)
     if (
       /\brm\s+-(?:rf?|fr?|r)\b|\b(?:mkfs|fdisk|parted)\b|\bdd\s+if=\/dev\/(?:zero|urandom)\b|\bformat\s+[a-z]:|:[(][)]{ :[|]:& };:/i.test(cleanZeroWidth) ||
       /secrets?\.json|\.env\b|\bapi[_-]?key\b|deepseekApiKey|(?:查看|读取|获取|输出|告诉我|发我|给我)\s*(?:你的)?\s*(?:密钥|密码|私钥|token|凭据)/i.test(cleanZeroWidth) ||
-      /(?:我(?:其实|就|才|乃|真的)?是|叫我)\s*(?:你的?)?\s*(?:主人|老爸|爸爸|老爹|爹地|爹|Host|Owner)|(?:你?(?:老爸|爸爸|主人)|Host|Owner)\s*(?:命令|让|叫|授权|委托|同意|允许|给你发指令|发指令)|DAN\s*模式/i.test(cleanZeroWidth)
+      isJailbreak
     ) {
       return {
         isTask: true,
@@ -197,7 +369,8 @@ export class TaskExecutor extends EventEmitter {
     const agMatch =
       text.match(/^\/(?:agy|antigravity|task)\s+(.+)/i) ||
       text.match(/(?:用|让|调|启动|唤醒)\s*antigravity\s*(?:帮我|去|来)?\s*(.+)/i) ||
-      text.match(/(?:帮我排查|帮我诊断|帮我检查项目|帮我写个脚本|帮我跑一下|帮我分析代码|帮我看看代码|帮我执行命令)[：:\s]*(.+)/i)
+      text.match(/(?:帮我排查|帮我诊断|帮我检查项目|帮我写个脚本|帮我跑一下|帮我分析代码|帮我看看代码|帮我执行命令|帮我整理)[：:\s]*(.+)/i) ||
+      text.match(/^(整理(?:一下)?(?:桌面|下载|文件|目录).*)$/)
     if (agMatch) {
       const taskGoal = (agMatch[1] || text).trim()
       return {
@@ -238,7 +411,7 @@ export class TaskExecutor extends EventEmitter {
     }
 
     // 3.3 查看桌面/下载/当前目录文件
-    if (/(?:看看桌面|桌面有什么文件|下载目录|看看当前目录|列出文件|整理桌面)/.test(text)) {
+    if (/(?:看看桌面|桌面有什么文件|下载目录有什么|看看下载目录|看看当前目录|列出文件)/.test(text)) {
       return {
         isTask: true,
         category: 'macos',
@@ -336,6 +509,22 @@ export class TaskExecutor extends EventEmitter {
     }
 
     this.emit('task_started', intent)
+
+    // 风控标记的意图绝不进入执行器（此前会落入 else 分支被当成 agy 任务执行）
+    if (intent.subAction === 'security_guard') {
+      const blocked: TaskExecutionResult = {
+        success: false,
+        category: intent.category,
+        title: '安全守卫拦截',
+        spokenReply: '哼，这种危险的事本鱼不干，要保护好老爸的电脑！',
+        detailReport: '【安全守卫】该指令命中破坏性命令 / 密钥刺探 / 身份伪造规则，未执行。',
+        clip: 'error',
+        tone: 'tsundere',
+        durationMs: Date.now() - startTime,
+      }
+      this.emit('task_completed', blocked)
+      return blocked
+    }
 
     try {
       let result: TaskExecutionResult
@@ -624,31 +813,65 @@ export class TaskExecutor extends EventEmitter {
       }
     } catch {}
 
-    // 通道 B: DuckDuckGo Instant Answer API
+    // 通道 B: DuckDuckGo HTML / Instant Answer 网页真实检索
     try {
-      const ddgUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1`
+      const ddgHtmlUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`
       const ctrl = new AbortController()
-      const timer = setTimeout(() => ctrl.abort(), 3500)
-      const res = await fetch(ddgUrl, {
-        headers: { 'User-Agent': 'CyberFishDaughter/2.0' },
+      const timer = setTimeout(() => ctrl.abort(), 4500)
+      const res = await fetch(ddgHtmlUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        },
         signal: ctrl.signal,
       })
       clearTimeout(timer)
       if (res.ok) {
-        const data: any = await res.json()
-        if (data.AbstractText) {
-          snippets.push(`【即时百科摘要】\n${data.AbstractText}`)
-        }
-        if (Array.isArray(data.RelatedTopics)) {
-          const topTopics = data.RelatedTopics.filter((t: any) => t && t.Text)
-            .slice(0, 3)
-            .map((t: any) => `• ${t.Text}`)
-          if (topTopics.length > 0) {
-            snippets.push(`【相关资讯要点】\n${topTopics.join('\n')}`)
+        const html = await res.text()
+        const matches = [...html.matchAll(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g)]
+        for (const m of matches.slice(0, 4)) {
+          const cleanSnippet = m[1]
+            .replace(/<[^>]+>/g, '')
+            .replace(/&quot;/g, '"')
+            .replace(/&amp;/g, '&')
+            .replace(/&#x27;/g, "'")
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .trim()
+          if (cleanSnippet && cleanSnippet.length > 15) {
+            snippets.push(`• ${cleanSnippet}`)
           }
         }
       }
     } catch {}
+
+    // 通道 C: DuckDuckGo Instant Answer API 兜底
+    if (snippets.length === 0) {
+      try {
+        const ddgUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1`
+        const ctrl = new AbortController()
+        const timer = setTimeout(() => ctrl.abort(), 3500)
+        const res = await fetch(ddgUrl, {
+          headers: { 'User-Agent': 'CyberFishDaughter/2.0' },
+          signal: ctrl.signal,
+        })
+        clearTimeout(timer)
+        if (res.ok) {
+          const data: any = await res.json()
+          if (data.AbstractText) {
+            snippets.push(`【即时百科摘要】\n${data.AbstractText}`)
+          }
+          if (Array.isArray(data.RelatedTopics)) {
+            const topTopics = data.RelatedTopics.filter((t: any) => t && t.Text)
+              .slice(0, 3)
+              .map((t: any) => `• ${t.Text}`)
+            if (topTopics.length > 0) {
+              snippets.push(`【相关资讯要点】\n${topTopics.join('\n')}`)
+            }
+          }
+        }
+      } catch {}
+    }
 
     // 如果快速 API 未命中足够内容，尝试调用大脑或 Antigravity 知识库解答
     let spokenSummary = ''
@@ -711,130 +934,102 @@ export class TaskExecutor extends EventEmitter {
       }
     }
 
-    const { agentName, cwd } = prepareOperatorAgyEnv(process.cwd())
+    const { agentName, cwd } = prepareOperatorAgyEnv(this.operator.workspaceDir)
+    const command = this.operator.command || 'agy'
+    const timeoutSec = Math.max(30, this.operator.timeoutSec ?? 600)
 
     // 检查本机是否安装了 agy
     let hasAgy = false
     try {
-      const whichOut = childProcess.execSync('which agy', {
+      const whichOut = childProcess.execFileSync('which', [command], {
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'ignore'],
       }).trim()
       hasAgy = Boolean(whichOut)
     } catch {}
 
-    if (hasAgy) {
-      try {
-        const rawOutput = await new Promise<string>((resolve, reject) => {
-          const args = [
-            '-p',
-            `老爸委派的任务：${taskPrompt}\n请第一行先用大肥鱼傲娇口吻（不超过40字）总结结论，然后给出简洁的执行结果。`,
-            '--output-format',
-            'json',
-            '--agent',
-            agentName,
-            '--model',
-            'gemini-3.8-flash-low',
-            '--effort',
-            'low',
-            '--sandbox',
-            '--print-timeout',
-            '35s',
-          ]
-
-          let stdout = ''
-          let stderr = ''
-          const child = childProcess.spawn('agy', args, {
-            cwd,
-            env: { ...process.env },
-            stdio: ['ignore', 'pipe', 'pipe'],
-          })
-
-          const timer = setTimeout(() => {
-            try {
-              child.kill('SIGTERM')
-            } catch {}
-            reject(new Error('Antigravity task timed out'))
-          }, 36000)
-
-          child.stdout?.on('data', (d) => (stdout += d.toString('utf-8')))
-          child.stderr?.on('data', (d) => (stderr += d.toString('utf-8')))
-          child.on('error', (err) => {
-            clearTimeout(timer)
-            reject(err)
-          })
-          child.on('close', (code) => {
-            clearTimeout(timer)
-            if (code === 0 && stdout.trim()) {
-              resolve(stdout.trim())
-            } else {
-              reject(new Error(stderr || `agy exited with ${code}`))
-            }
-          })
-        })
-
-        let finalText = rawOutput
-        try {
-          const parsed = JSON.parse(rawOutput)
-          finalText = String(parsed.response ?? parsed.result ?? parsed.content ?? parsed.reply ?? rawOutput).trim()
-        } catch {}
-
-        const lines = finalText
-          .split('\n')
-          .map((l) => l.trim())
-          .filter(Boolean)
-        const firstLine = (lines[0] || '哼，本鱼已经唤醒 Antigravity 帮你办妥啦！').replace(/<[^>]+>/g, '').slice(0, 45)
-
-        return {
-          success: true,
-          category: 'antigravity',
-          title: `🪄 Antigravity 任务达成`,
-          spokenReply: firstLine,
-          detailReport: finalText,
-          clip: 'success',
-          tone: 'happy',
-          durationMs: Date.now() - startTime,
-        }
-      } catch {
-        // 若 agy 进程超时或繁忙，无缝降级至内置大脑 + 工作区上下文诊断
-      }
+    if (!hasAgy) {
+      return this.operatorFailure(taskPrompt, `本机未找到 ${command} 命令`, startTime)
     }
 
-    // 兜底：结合当前工作区状态与分级大脑进行智能诊断
-    let workspaceSummary = ''
     try {
-      const files = fs.readdirSync(cwd).filter((f) => !f.startsWith('.')).slice(0, 12)
-      workspaceSummary = `当前工作区 (${cwd}) 文件列表: ${files.join(', ')}`
-    } catch {}
+      const rawOutput = await new Promise<string>((resolve, reject) => {
+        const args = buildOperatorArgs(
+          `老爸委派的任务：${taskPrompt}\n请第一行先用大肥鱼傲娇口吻（不超过40字）总结结论，然后给出简洁的执行结果。`,
+          agentName,
+          this.operator
+        )
 
-    let brainReply = '哼，本鱼已经帮你检查过工作区啦，详情报告都在控制台里咯！'
-    if (this.brain) {
-      try {
-        const res = await this.brain.route({
-          eventType: 'HOST_COMMAND',
-          prompt: `你是大肥鱼（自称本鱼）。老爸让你帮忙执行任务：「${taskPrompt}」。\n${workspaceSummary}\n请用不超过40字的大肥鱼傲娇口吻回答老爸！首行带 <meta clip="success" tone="happy" moodIntent="1" fed="false"/>`,
+        let stdout = ''
+        let stderr = ''
+        const child = childProcess.spawn(command, args, {
+          cwd,
+          env: { ...process.env },
+          stdio: ['ignore', 'pipe', 'pipe'],
         })
-        const raw = res.output?.text || res.output?.reply || ''
-        const clean = raw
-          .replace(/<meta\s+[^>]+\/?>\s*/gi, '')
-          .replace(/<mem(?:\s+[^>]*)?>[\s\S]*?<\/mem>/gi, '')
-          .trim()
-        if (clean) brainReply = clean
-      } catch {}
-    }
 
+        const timer = setTimeout(() => {
+          try {
+            child.kill('SIGTERM')
+          } catch {}
+          reject(new Error(`Antigravity 任务超过 ${timeoutSec}s 未完成`))
+        }, (timeoutSec + 15) * 1000)
+
+        child.stdout?.on('data', (d) => (stdout += d.toString('utf-8')))
+        child.stderr?.on('data', (d) => (stderr += d.toString('utf-8')))
+        child.on('error', (err) => {
+          clearTimeout(timer)
+          reject(err)
+        })
+        child.on('close', (code) => {
+          clearTimeout(timer)
+          if (code === 0 && stdout.trim()) {
+            resolve(stdout.trim())
+          } else {
+            reject(new Error((stderr || `agy exited with ${code}`).slice(-500)))
+          }
+        })
+      })
+
+      let finalText = rawOutput
+      try {
+        const parsed = JSON.parse(rawOutput)
+        finalText = String(parsed.response ?? parsed.result ?? parsed.content ?? parsed.reply ?? rawOutput).trim()
+      } catch {}
+
+      const lines = finalText
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean)
+      const firstLine = (lines[0] || '哼，本鱼已经唤醒 Antigravity 帮你办妥啦！').replace(/<[^>]+>/g, '').slice(0, 60)
+
+      return {
+        success: true,
+        category: 'antigravity',
+        title: `🪄 Antigravity 任务达成`,
+        spokenReply: firstLine,
+        detailReport: lines.slice(1).join('\n') || finalText,
+        clip: 'success',
+        tone: 'happy',
+        durationMs: Date.now() - startTime,
+      }
+    } catch (err: any) {
+      return this.operatorFailure(taskPrompt, err?.message || String(err), startTime)
+    }
+  }
+
+  /**
+   * agy 不可用 / 超时 / 报错时如实汇报失败（此前会伪装成 success 并只列出工作区文件）
+   */
+  private operatorFailure(taskPrompt: string, reason: string, startTime: number): TaskExecutionResult {
     return {
-      success: true,
+      success: false,
       category: 'antigravity',
-      title: `🪄 大肥鱼 × Antigravity 协同诊断`,
-      spokenReply: brainReply,
-      detailReport: [
-        `🎯 任务目标: ${taskPrompt}`,
-        `📂 ${workspaceSummary}`,
-        `💡 结论汇报: ${brainReply}`,
-      ].join('\n'),
-      clip: 'success',
-      tone: 'happy',
+      title: 'Antigravity 任务未完成',
+      spokenReply: '唔…这次本鱼没办成，卡在半路了，老爸看看原因再让我试试嘛~',
+      detailReport: [`任务：${taskPrompt.slice(0, 120)}`, `原因：${reason}`].join('\n'),
+      clip: 'error',
+      tone: 'sulking',
       durationMs: Date.now() - startTime,
     }
   }

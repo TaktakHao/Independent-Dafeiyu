@@ -73,7 +73,15 @@ export interface BrainOutput {
   to?: string
   /** 原始提取的元数据标签字符串 (如 <meta .../>) */
   rawMeta?: string
+  /** 闲聊大脑顺带判定的意图：chat 闲聊 / query 只读查询 / task 需要动手的任务 */
+  intent?: ReplyIntent
+  /** 查询或任务的领域提示：okx / docker / web / computer / other */
+  topic?: string
+  /** 查询或任务的一句话目标复述（由大脑改写，供行动脑执行） */
+  task?: string
 }
+
+export type ReplyIntent = 'chat' | 'query' | 'task'
 
 /**
  * 大脑思考请求入参
